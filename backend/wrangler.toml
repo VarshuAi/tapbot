@@ -1,0 +1,13 @@
+name = "tapbot-catalog-backend"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tapbot_catalog"
+database_id = "xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "tapbot-packages"
+preview_bucket_name = "tapbot-packages-preview"
