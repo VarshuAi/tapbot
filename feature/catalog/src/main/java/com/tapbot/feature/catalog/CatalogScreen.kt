@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -74,6 +75,23 @@ fun CatalogScreen(
                         )
                     }
                 },
+                actions = {
+                    val isRefreshing = (uiState as? CatalogUiState.Success)?.isRefreshing == true
+                    IconButton(
+                        onClick = { viewModel.refresh() },
+                        enabled = !isRefreshing
+                    ) {
+                        if (isRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh catalog")
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -88,7 +106,15 @@ fun CatalogScreen(
             when (val state = uiState) {
                 is CatalogUiState.Loading -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Connecting to Bot Store...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 is CatalogUiState.Error -> {
@@ -99,9 +125,13 @@ fun CatalogScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = "Error: ${state.message}", color = MaterialTheme.colorScheme.error)
+                            Text(
+                                text = "Unable to load store: ${state.message}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
                             Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = { viewModel.loadCatalog() }) {
+                            Button(onClick = { viewModel.loadCatalog(forceRefresh = true) }) {
                                 Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Retry")
@@ -129,70 +159,171 @@ private fun CatalogContent(
     onCategorySelected: (String) -> Unit,
     onBotClick: (String) -> Unit
 ) {
-    val categories = listOf("All", "Utilities", "News & Media", "AI & Productivity")
-
-    Column(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
         // Search Bar
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = onSearchQueryChanged,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            placeholder = { Text("Search published bots...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-            trailingIcon = {
-                if (state.searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { onSearchQueryChanged("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear")
+        item {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onSearchQueryChanged,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text("Search published bots...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                trailingIcon = {
+                    if (state.searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchQueryChanged("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear")
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
+
+        // Featured Bots Section
+        if (state.featuredBots.isNotEmpty() && state.searchQuery.isBlank() && state.selectedCategory == "All") {
+            item {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Featured Bots",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(state.featuredBots, key = { "featured_${it.id}" }) { bot ->
+                        FeaturedBotCard(bot = bot, onClick = { onBotClick(bot.id) })
                     }
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp)
-        )
 
-        // Categories Chips
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(categories) { cat ->
-                FilterChip(
-                    selected = state.selectedCategory == cat,
-                    onClick = { onCategorySelected(cat) },
-                    label = { Text(cat) }
-                )
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        // Dynamic Categories Filter Chips
+        item {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(state.categories) { cat ->
+                    FilterChip(
+                        selected = state.selectedCategory.equals(cat, ignoreCase = true),
+                        onClick = { onCategorySelected(cat) },
+                        label = { Text(cat) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Section Title: All Published Bots
+        item {
+            Text(
+                text = if (state.selectedCategory == "All") "All Published Bots" else "${state.selectedCategory} Bots",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
 
         // Bot List
         if (state.bots.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "No bots match your criteria",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No bots match your criteria",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(state.bots, key = { it.id }) { bot ->
+            items(state.bots, key = { it.id }) { bot ->
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     BotCard(bot = bot, onClick = { onBotClick(bot.id) })
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedBotCard(
+    bot: BotMetadata,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .width(280.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SmartToy,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = bot.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "v${bot.version} • ${bot.category}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = bot.summary,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
@@ -236,7 +367,7 @@ private fun BotCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "v${bot.version} by ${bot.author}",
+                        text = "v${bot.version} • ${bot.packageInfo.runtimeType}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

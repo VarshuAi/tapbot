@@ -7,9 +7,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.tapbot.poc.ProofOfConceptScreen
-import com.tapbot.poc.ProofOfConceptViewModel
+import androidx.navigation.compose.rememberNavController
+import com.tapbot.navigation.TapBotNavHost
 import com.tapbot.ui.theme.TapBotTheme
 
 class MainActivity : ComponentActivity() {
@@ -23,14 +22,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             TapBotTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    val pocViewModel: ProofOfConceptViewModel = viewModel(
-                        factory = ProofOfConceptViewModel.provideFactory(
-                            credentialStore = app.pocCredentialStore,
-                            botInstanceManager = app.botInstanceManager,
-                            logRepository = app.logRepository
-                        )
-                    )
-                    ProofOfConceptScreen(viewModel = pocViewModel)
+                    val navController = rememberNavController()
+                    TapBotNavHost(app = app, navController = navController)
                 }
             }
         }

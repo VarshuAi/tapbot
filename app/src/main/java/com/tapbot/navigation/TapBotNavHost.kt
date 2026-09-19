@@ -27,7 +27,7 @@ fun TapBotNavHost(
     ) {
         composable(route = Screen.Catalog.route) {
             val catalogViewModel: CatalogViewModel = viewModel(
-                factory = CatalogViewModel.provideFactory(app.catalogApi)
+                factory = CatalogViewModel.provideFactory(app.catalogRepository)
             )
             CatalogScreen(
                 viewModel = catalogViewModel,
@@ -47,16 +47,29 @@ fun TapBotNavHost(
             val botDetailViewModel: BotDetailViewModel = viewModel(
                 factory = BotDetailViewModel.provideFactory(
                     botId = botId,
-                    catalogApi = app.catalogApi,
+                    catalogRepository = app.catalogRepository,
                     credentialStore = app.credentialStore,
                     botServiceController = app.botServiceController,
-                    logRepository = app.logRepository
+                    logRepository = app.logRepository,
+                    packageDownloader = app.botPackageDownloader,
+                    installationManager = app.localBotInstallationManager
                 )
             )
             BotDetailScreen(
                 viewModel = botDetailViewModel,
                 onBackClick = { navController.popBackStack() }
             )
+        }
+
+        composable(route = Screen.Poc.route) {
+            val pocViewModel: com.tapbot.poc.ProofOfConceptViewModel = viewModel(
+                factory = com.tapbot.poc.ProofOfConceptViewModel.provideFactory(
+                    credentialStore = app.pocCredentialStore,
+                    botInstanceManager = app.botInstanceManager,
+                    logRepository = app.logRepository
+                )
+            )
+            com.tapbot.poc.ProofOfConceptScreen(viewModel = pocViewModel)
         }
     }
 }

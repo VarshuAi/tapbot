@@ -18,7 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -29,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -61,7 +66,7 @@ fun BotDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = (uiState as? BotDetailUiState.Success)?.bot?.name ?: "Bot Configuration",
+                        text = (uiState as? BotDetailUiState.Success)?.bot?.name ?: "Bot Details",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -82,7 +87,11 @@ fun BotDetailScreen(
             when (val state = uiState) {
                 is BotDetailUiState.Loading -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Loading bot metadata...")
+                        }
                     }
                 }
                 is BotDetailUiState.Error -> {
@@ -98,6 +107,7 @@ fun BotDetailScreen(
                 is BotDetailUiState.Success -> {
                     BotDetailContent(
                         state = state,
+                        onInstallClick = viewModel::installBot,
                         onCredentialChanged = viewModel::updateCredential,
                         onSaveCredentials = viewModel::saveCredentials,
                         onStartBot = viewModel::startBot,
@@ -113,6 +123,7 @@ fun BotDetailScreen(
 @Composable
 private fun BotDetailContent(
     state: BotDetailUiState.Success,
+    onInstallClick: () -> Unit,
     onCredentialChanged: (String, String) -> Unit,
     onSaveCredentials: () -> Unit,
     onStartBot: () -> Unit,
@@ -128,135 +139,49 @@ private fun BotDetailContent(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Status & Control Banner
-        RunnerStatusCard(
-            runState = state.runState,
-            onStartBot = onStartBot,
-            onStopBot = onStopBot
-        )
-
-        // Bot Header Info
+        // 1. Bot Header Card (Icon, Name, Version, Runtime, Category, Description)
         BotHeaderCard(bot = state.bot)
 
-        // Credentials Input Section
-        CredentialInputSection(
-            specs = state.bot.requiredCredentials,
-            values = state.credentials,
-            onValueChanged = onCredentialChanged,
-            onSaveClick = onSaveCredentials,
-            isSaving = state.isSavingCredentials,
-            saveSuccess = state.credentialSaveSuccess
-        )
+        // 2. Package & Runtime Metadata Card (Requirements, Package Size, Last Update, Release Notes)
+        BotMetadataDetailsCard(bot = state.bot)
 
-        // Live Log Viewer
-        LiveConsoleLogViewer(
-            logs = state.logs,
-            onClearLogs = onClearLogs
-        )
+        // 3. Install Flow Section (If not installed, prompt "Add Bot" with progress)
+        if (!state.isInstalled) {
+            InstallActionCard(
+                isInstalling = state.isInstalling,
+                progress = state.installProgress,
+                error = state.installError,
+                onInstallClick = onInstallClick
+            )
+        } else {
+            // 4. Installed Status Banner
+            InstalledStatusBanner(installedVersion = state.installedVersion ?: state.bot.version)
+
+            // 5. Credentials Configuration Section (Dynamic fields)
+            CredentialInputSection(
+                specs = state.bot.requiredCredentials,
+                values = state.credentials,
+                onValueChanged = onCredentialChanged,
+                onSaveClick = onSaveCredentials,
+                isSaving = state.isSavingCredentials,
+                saveSuccess = state.credentialSaveSuccess
+            )
+
+            // 6. Runner Execution Control Card (Final Action: "START BOT")
+            RunnerExecutionCard(
+                runState = state.runState,
+                onStartBot = onStartBot,
+                onStopBot = onStopBot
+            )
+
+            // 7. Live Console Log Viewer
+            LiveConsoleLogViewer(
+                logs = state.logs,
+                onClearLogs = onClearLogs
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
-    }
-}
-
-@Composable
-private fun RunnerStatusCard(
-    runState: BotRunState,
-    onStartBot: () -> Unit,
-    onStopBot: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = when (runState) {
-                is BotRunState.Running -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                is BotRunState.Error -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            }
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Runner Status",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                when (runState) {
-                    is BotRunState.Stopped -> {
-                        Text(
-                            text = "Stopped",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    is BotRunState.Starting -> {
-                        Text(
-                            text = "Starting service...",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF57C00)
-                        )
-                    }
-                    is BotRunState.Running -> {
-                        Text(
-                            text = "Active in Foreground",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    is BotRunState.PausedNoNetwork -> {
-                        Text(
-                            text = "Paused (No Internet)",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFA000)
-                        )
-                    }
-                    is BotRunState.Error -> {
-                        Text(
-                            text = "Error: ${runState.message}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            if (runState is BotRunState.Running) {
-                Button(
-                    onClick = onStopBot,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    ),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Stop")
-                }
-            } else {
-                Button(
-                    onClick = onStartBot,
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Start Bot")
-                }
-            }
-        }
     }
 }
 
@@ -266,14 +191,14 @@ private fun BotHeaderCard(bot: BotMetadata) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(56.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
@@ -281,23 +206,35 @@ private fun BotHeaderCard(bot: BotMetadata) {
                     Icon(
                         imageVector = Icons.Default.SmartToy,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(28.dp)
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(16.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = bot.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "v${bot.version} • by ${bot.author}",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "v${bot.version} • ${bot.author}",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = bot.category,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
             }
@@ -309,6 +246,280 @@ private fun BotHeaderCard(bot: BotMetadata) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
+
+            if (bot.tags.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    bot.tags.forEach { tag ->
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface
+                        ) {
+                            Text(
+                                text = "#$tag",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun BotMetadataDetailsCard(bot: BotMetadata) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Package Specifications",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Metadata Grid
+            MetadataRow(label = "Runtime", value = bot.packageInfo.runtimeType)
+            MetadataRow(
+                label = "Package Size",
+                value = if (bot.packageInfo.packageSizeBytes > 0) formatBytes(bot.packageInfo.packageSizeBytes) else "Lightweight (< 1 MB)"
+            )
+            MetadataRow(label = "Min Android App", value = "v${bot.minimumAppVersion}+")
+            MetadataRow(label = "Required Permissions", value = bot.permissionsRequired.joinToString(", "))
+            val lastUpdated = bot.updatedAt
+            if (!lastUpdated.isNullOrBlank()) {
+                MetadataRow(label = "Last Updated", value = lastUpdated.take(10))
+            }
+
+            // Release Notes
+            val notes = bot.releaseNotes
+            if (!notes.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Release Notes (${bot.version}):",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = notes,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetadataRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun InstallActionCard(
+    isInstalling: Boolean,
+    progress: Float,
+    error: String?,
+    onInstallClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Add to Local Runner",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Downloads the package from Cloudflare R2, verifies SHA-256 integrity, and prepares on-device execution.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            )
+
+            if (isInstalling) {
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Downloading & Verifying: ${(progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            } else {
+                if (error != null) {
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+
+                Button(
+                    onClick = onInstallClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add Bot")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstalledStatusBanner(installedVersion: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Text(
+                    text = "Installed & Ready",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "Package version $installedVersion verified and installed locally.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunnerExecutionCard(
+    runState: BotRunState,
+    onStartBot: () -> Unit,
+    onStopBot: () -> Unit
+) {
+    val isRunning = runState is BotRunState.Running
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isRunning)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Runner Status",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = when (runState) {
+                            is BotRunState.Running -> "Running in Foreground Service (Polls: ${runState.pollCount})"
+                            is BotRunState.Starting -> "Starting connection..."
+                            is BotRunState.Error -> "Error: ${runState.message}"
+                            else -> "Stopped"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (isRunning) {
+                    Button(
+                        onClick = onStopBot,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("STOP BOT")
+                    }
+                } else {
+                    Button(
+                        onClick = onStartBot,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("START BOT")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    return if (mb >= 1.0) {
+        "%.1f MB".format(mb)
+    } else {
+        "%.1f KB".format(kb)
     }
 }

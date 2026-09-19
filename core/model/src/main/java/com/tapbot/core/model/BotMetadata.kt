@@ -20,5 +20,10 @@ data class BotMetadata(
     val requiredCredentials: List<BotCredentialSpec> = listOf(BotCredentialSpec.TELEGRAM_BOT_TOKEN),
     val packageInfo: BotPackageInfo,
     val permissionsRequired: List<String> = emptyList(),
-    val repositoryUrl: String? = null
+    val repositoryUrl: String? = null,
+    val releaseNotes: String? = null,
+    val minimumAppVersion: Int = 1,
+    val minimumRuntimeVersion: String = "1.0.0",
+    val updatedAt: String? = null,
+    val isFeatured: Boolean = false
 )

@@ -3,9 +3,18 @@ package com.tapbot
 import android.app.Application
 import com.tapbot.core.logging.BotLogRepository
 import com.tapbot.core.logging.InMemoryRingBufferLogRepository
+import com.tapbot.core.network.BotPackageDownloader
 import com.tapbot.core.network.CatalogApi
+import com.tapbot.core.network.CatalogRepository
 import com.tapbot.core.network.CloudflareCatalogApi
+import com.tapbot.core.network.CloudflareRemoteBotDataSource
+import com.tapbot.core.network.DefaultLocalBotInstallationManager
+import com.tapbot.core.network.LocalBotInstallationManager
+import com.tapbot.core.network.LocalCatalogCache
 import com.tapbot.core.network.MockCatalogApi
+import com.tapbot.core.network.OfflineFirstCatalogRepository
+import com.tapbot.core.network.OkHttpBotPackageDownloader
+import com.tapbot.core.network.RemoteBotDataSource
 import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.AndroidBotServiceController
 import com.tapbot.core.runner.BotServiceController
@@ -16,6 +25,8 @@ import com.tapbot.core.security.CredentialStore
 import com.tapbot.core.security.KeystoreCredentialStore
 import com.tapbot.core.security.KeystoreSecureCredentialStore
 import com.tapbot.core.security.SecureCredentialStore
+import okhttp3.OkHttpClient
+import java.io.File
 
 /**
  * Application entry point for TapBot.
@@ -30,6 +41,21 @@ class TapBotApplication : Application() {
         private set
 
     lateinit var catalogApi: CatalogApi
+        private set
+
+    lateinit var remoteBotDataSource: RemoteBotDataSource
+        private set
+
+    lateinit var localCatalogCache: LocalCatalogCache
+        private set
+
+    lateinit var catalogRepository: CatalogRepository
+        private set
+
+    lateinit var botPackageDownloader: BotPackageDownloader
+        private set
+
+    lateinit var localBotInstallationManager: LocalBotInstallationManager
         private set
 
     lateinit var telegramApiClient: TelegramApiClient
@@ -54,21 +80,38 @@ class TapBotApplication : Application() {
         // 2. Initialize in-memory ring buffer logging
         logRepository = InMemoryRingBufferLogRepository(maxCapacityPerBot = 500)
 
-        // 3. Initialize Catalog client connecting to Cloudflare Workers / D1 API
+        // 3. Initialize Catalog data source, cache, and repository connecting to Cloudflare Workers / D1 API
+        val okHttpClient = OkHttpClient()
+        remoteBotDataSource = CloudflareRemoteBotDataSource(client = okHttpClient)
+        localCatalogCache = LocalCatalogCache(cacheFile = File(cacheDir, "catalog_cache.json"))
+        catalogRepository = OfflineFirstCatalogRepository(
+            remoteSource = remoteBotDataSource,
+            cache = localCatalogCache
+        )
         catalogApi = CloudflareCatalogApi(fallback = MockCatalogApi())
 
-        // 4. Initialize Telegram API client
+        // 4. Initialize package downloader and local installation manager
+        botPackageDownloader = OkHttpBotPackageDownloader(
+            client = okHttpClient,
+            cacheDir = File(cacheDir, "package_cache")
+        )
+        localBotInstallationManager = DefaultLocalBotInstallationManager(
+            storageFile = File(filesDir, "installed_bots.json"),
+            installDir = File(filesDir, "installed_packages")
+        )
+
+        // 5. Initialize Telegram API client
         telegramApiClient = TelegramApiClient()
 
-        // 5. Initialize runner service controller
+        // 6. Initialize runner service controller
         botServiceController = AndroidBotServiceController(this)
 
-        // 6. Connect ServiceLocator hooks for BotForegroundService
+        // 7. Connect ServiceLocator hooks for BotForegroundService
         ServiceLocator.pocCredentialStore = pocCredentialStore
         ServiceLocator.logRepository = logRepository
         ServiceLocator.telegramApiClient = telegramApiClient
 
-        // 7. Initialize BotInstanceManager for Phase 3 Background Execution
+        // 8. Initialize BotInstanceManager for Phase 3 Background Execution
         botInstanceManager = DefaultBotInstanceManager(
             context = this,
             credentialStore = pocCredentialStore,
