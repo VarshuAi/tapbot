@@ -8,9 +8,11 @@ import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.network.BotPackageDownloader
 import com.tapbot.core.network.CatalogApi
 import com.tapbot.core.network.CatalogRepository
+import com.tapbot.core.network.DowngradeAttackChecker
 import com.tapbot.core.network.LocalBotInstallationManager
 import com.tapbot.core.network.OfflineFirstCatalogRepository
 import com.tapbot.core.runner.BotServiceController
+import com.tapbot.core.security.SecretRedactor
 import com.tapbot.core.security.SecureCredentialStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,6 +78,7 @@ class BotDetailViewModel(
                         isInstalled = installed,
                         installedVersion = installedVer,
                         credentials = savedCredentials,
+                        isConfiguring = savedCredentials.isEmpty(),
                         runState = botServiceController.getBotRunState(botId).value,
                         logs = logRepository.getLogStream(botId).value
                     )
@@ -90,7 +93,7 @@ class BotDetailViewModel(
      * Executes the 8-Step Installation Flow:
      * 1. Retrieve manifest
      * 2. Check compatibility (minimumAppVersion, runtime)
-     * 3. Check installed version (skip if already installed)
+     * 3. Check installed version & Downgrade attack protection
      * 4. Download package with progress
      * 5. Verify SHA-256 checksum
      * 6. Install locally
@@ -122,8 +125,16 @@ class BotDetailViewModel(
                 return@launch
             }
 
-            // Step 3: Check installed version
+            // Step 3: Check installed version & Downgrade attack protection
             val currentInstalledVersion = installationManager?.getInstalledVersion(bot.id)
+            if (currentInstalledVersion != null && DowngradeAttackChecker.isDowngrade(currentInstalledVersion, bot.version)) {
+                _uiState.value = current.copy(
+                    isInstalling = false,
+                    installError = "Package downgrade rejected: Candidate v${bot.version} is older than installed v$currentInstalledVersion"
+                )
+                return@launch
+            }
+
             if (currentInstalledVersion == bot.version && installationManager?.isInstalled(bot.id) == true) {
                 _uiState.value = current.copy(
                     isInstalling = false,
@@ -161,7 +172,8 @@ class BotDetailViewModel(
                         isInstalled = true,
                         isInstalling = false,
                         installedVersion = bot.version,
-                        installProgress = 1.0f
+                        installProgress = 1.0f,
+                        isConfiguring = true
                     )
                 }
                 .onFailure { err ->
@@ -197,22 +209,96 @@ class BotDetailViewModel(
         }
     }
 
+    /**
+     * Validates all required credentials against format rules (e.g. Telegram token regex).
+     * @return true if all credentials are valid; false and sets error state if invalid/missing.
+     */
+    fun validateCredentials(): Boolean {
+        val current = _uiState.value as? BotDetailUiState.Success ?: return false
+        val errors = mutableMapOf<String, String>()
+        for (spec in current.bot.requiredCredentials) {
+            val value = current.credentials[spec.key]?.trim().orEmpty()
+            if (spec.isRequired && value.isBlank()) {
+                errors[spec.key] = "${spec.label} is required"
+            } else if (value.isNotBlank() && (spec.key.equals("bot_token", ignoreCase = true) || spec.key.equals("telegram_bot_token", ignoreCase = true))) {
+                val tgRegex = Regex("""^\d{5,16}:[a-zA-Z0-9_-]{6,64}$""")
+                if (!tgRegex.matches(value)) {
+                    errors[spec.key] = "Invalid Telegram Bot Token format (e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)"
+                }
+            }
+        }
+        if (errors.isNotEmpty()) {
+            _uiState.update {
+                if (it is BotDetailUiState.Success) {
+                    it.copy(
+                        credentialErrors = errors,
+                        generalCredentialError = "Please correct the credential errors above before starting the bot."
+                    )
+                } else it
+            }
+            return false
+        }
+        _uiState.update {
+            if (it is BotDetailUiState.Success) {
+                it.copy(credentialErrors = emptyMap(), generalCredentialError = null)
+            } else it
+        }
+        return true
+    }
+
     fun updateCredential(key: String, value: String) {
         val current = _uiState.value as? BotDetailUiState.Success ?: return
         val updated = current.credentials.toMutableMap().apply { put(key, value) }
-        _uiState.value = current.copy(credentials = updated, credentialSaveSuccess = false)
+        val updatedErrors = current.credentialErrors.toMutableMap().apply { remove(key) }
+        _uiState.value = current.copy(
+            credentials = updated,
+            credentialErrors = updatedErrors,
+            generalCredentialError = null,
+            credentialSaveSuccess = false
+        )
     }
 
-    fun saveCredentials() {
-        val current = _uiState.value as? BotDetailUiState.Success ?: return
+    fun saveCredentials(): Boolean {
+        val current = _uiState.value as? BotDetailUiState.Success ?: return false
+        if (!validateCredentials()) {
+            return false
+        }
         viewModelScope.launch {
             _uiState.value = current.copy(isSavingCredentials = true)
             for ((key, value) in current.credentials) {
                 if (value.isNotBlank()) {
                     credentialStore.saveCredential(botId, key, value)
+                    SecretRedactor.registerSecret(value)
                 }
             }
-            _uiState.value = current.copy(isSavingCredentials = false, credentialSaveSuccess = true)
+            _uiState.value = current.copy(
+                isSavingCredentials = false,
+                credentialSaveSuccess = true,
+                isConfiguring = false,
+                credentialErrors = emptyMap(),
+                generalCredentialError = null
+            )
+        }
+        return true
+    }
+
+    fun deleteCredentials() {
+        val current = _uiState.value as? BotDetailUiState.Success ?: return
+        viewModelScope.launch {
+            credentialStore.deleteCredentials(botId)
+            _uiState.value = current.copy(
+                credentials = emptyMap(),
+                credentialErrors = emptyMap(),
+                generalCredentialError = null,
+                credentialSaveSuccess = false,
+                isConfiguring = true
+            )
+        }
+    }
+
+    fun setConfiguring(configuring: Boolean) {
+        _uiState.update {
+            if (it is BotDetailUiState.Success) it.copy(isConfiguring = configuring) else it
         }
     }
 
@@ -220,6 +306,9 @@ class BotDetailViewModel(
         val current = _uiState.value as? BotDetailUiState.Success ?: return
         if (!current.isInstalled) {
             installBot()
+            return
+        }
+        if (!validateCredentials()) {
             return
         }
         saveCredentials()

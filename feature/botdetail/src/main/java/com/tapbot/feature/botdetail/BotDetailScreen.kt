@@ -1,5 +1,6 @@
 package com.tapbot.feature.botdetail
 
+import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,16 +41,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.model.BotRunState
+import com.tapbot.core.security.SecurityWindowManager
 import com.tapbot.feature.botdetail.components.CredentialInputSection
 import com.tapbot.feature.botdetail.components.LiveConsoleLogViewer
 
@@ -60,6 +64,17 @@ fun BotDetailScreen(
     onBackClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Enforce hardware-backed window security (FLAG_SECURE) to prevent screenshots,
+    // screen recording, and OS task switcher previews of secret credentials
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val activity = context as? Activity
+        SecurityWindowManager.setSecureFlag(activity, true)
+        onDispose {
+            SecurityWindowManager.setSecureFlag(activity, false)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -109,7 +124,9 @@ fun BotDetailScreen(
                         state = state,
                         onInstallClick = viewModel::installBot,
                         onCredentialChanged = viewModel::updateCredential,
-                        onSaveCredentials = viewModel::saveCredentials,
+                        onSaveCredentials = { viewModel.saveCredentials() },
+                        onDeleteCredentials = viewModel::deleteCredentials,
+                        onConfigureToggle = viewModel::setConfiguring,
                         onStartBot = viewModel::startBot,
                         onStopBot = viewModel::stopBot,
                         onClearLogs = viewModel::clearLogs
@@ -126,6 +143,8 @@ private fun BotDetailContent(
     onInstallClick: () -> Unit,
     onCredentialChanged: (String, String) -> Unit,
     onSaveCredentials: () -> Unit,
+    onDeleteCredentials: () -> Unit,
+    onConfigureToggle: (Boolean) -> Unit,
     onStartBot: () -> Unit,
     onStopBot: () -> Unit,
     onClearLogs: () -> Unit
@@ -161,8 +180,13 @@ private fun BotDetailContent(
             CredentialInputSection(
                 specs = state.bot.requiredCredentials,
                 values = state.credentials,
+                errors = state.credentialErrors,
+                generalError = state.generalCredentialError,
+                isConfiguring = state.isConfiguring,
                 onValueChanged = onCredentialChanged,
                 onSaveClick = onSaveCredentials,
+                onDeleteClick = onDeleteCredentials,
+                onConfigureToggle = onConfigureToggle,
                 isSaving = state.isSavingCredentials,
                 saveSuccess = state.credentialSaveSuccess
             )

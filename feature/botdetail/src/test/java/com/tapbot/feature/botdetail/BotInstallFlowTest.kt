@@ -87,6 +87,8 @@ class BotInstallFlowTest {
             storage.getOrPut(botId) { mutableMapOf() }[key] = secretValue
         }
         override suspend fun getCredential(botId: String, key: String): String? = storage[botId]?.get(key)
+        override suspend fun deleteCredential(botId: String, key: String) { storage[botId]?.remove(key) }
+        override suspend fun hasCredential(botId: String, key: String): Boolean = storage[botId]?.containsKey(key) == true
         override suspend fun getAllCredentials(botId: String): Map<String, String> = storage[botId]?.toMap() ?: emptyMap()
         override suspend fun deleteCredentials(botId: String) { storage.remove(botId) }
         override suspend fun hasRequiredCredentials(botId: String, requiredKeys: List<String>): Boolean =

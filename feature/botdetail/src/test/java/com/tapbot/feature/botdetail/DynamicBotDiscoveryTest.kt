@@ -99,6 +99,14 @@ class DynamicBotDiscoveryTest {
             return storage[botId]?.get(key)
         }
 
+        override suspend fun deleteCredential(botId: String, key: String) {
+            storage[botId]?.remove(key)
+        }
+
+        override suspend fun hasCredential(botId: String, key: String): Boolean {
+            return storage[botId]?.containsKey(key) == true
+        }
+
         override suspend fun getAllCredentials(botId: String): Map<String, String> {
             return storage[botId]?.toMap() ?: emptyMap()
         }

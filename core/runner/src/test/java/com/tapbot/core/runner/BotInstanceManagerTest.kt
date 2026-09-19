@@ -14,6 +14,27 @@ import org.junit.Test
 class BotInstanceManagerTest {
 
     private class FakeCredentialStore(var storedToken: String? = null) : CredentialStore {
+        override suspend fun saveCredential(botId: String, key: String, secretValue: String) {
+            if (key == "telegram_bot_token") storedToken = secretValue
+        }
+        override suspend fun getCredential(botId: String, key: String): String? =
+            if (key == "telegram_bot_token") storedToken else null
+
+        override suspend fun deleteCredential(botId: String, key: String) {
+            if (key == "telegram_bot_token") storedToken = null
+        }
+        override suspend fun hasCredential(botId: String, key: String): Boolean =
+            key == "telegram_bot_token" && !storedToken.isNullOrBlank()
+
+        override suspend fun getAllCredentials(botId: String): Map<String, String> =
+            if (storedToken != null) mapOf("telegram_bot_token" to storedToken!!) else emptyMap()
+
+        override suspend fun deleteCredentials(botId: String) {
+            storedToken = null
+        }
+        override suspend fun hasRequiredCredentials(botId: String, requiredKeys: List<String>): Boolean =
+            requiredKeys.all { it == "telegram_bot_token" && !storedToken.isNullOrBlank() }
+
         override suspend fun saveToken(token: String) { storedToken = token }
         override suspend fun getToken(): String? = storedToken
         override suspend fun clearToken() { storedToken = null }

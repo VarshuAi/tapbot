@@ -33,7 +33,8 @@ interface BotPackageDownloader {
  */
 class OkHttpBotPackageDownloader(
     private val client: OkHttpClient = OkHttpClient(),
-    private val cacheDir: File? = null
+    private val cacheDir: File? = null,
+    private val packageVerifier: PackageVerifier = Sha256PackageVerifier()
 ) : BotPackageDownloader {
 
     override suspend fun downloadPackage(
@@ -46,7 +47,8 @@ class OkHttpBotPackageDownloader(
             // 1. Check local cache to avoid duplicate downloads
             val cachedArchive = cacheDir?.let { File(it, "$expectedSha256.botpkg") }
             if (cachedArchive != null && cachedArchive.exists() && cachedArchive.length() > 0) {
-                if (verifySha256(cachedArchive, expectedSha256)) {
+                val cacheVerification = packageVerifier.verifyPackage(cachedArchive, expectedSha256)
+                if (cacheVerification.isSuccess) {
                     if (cachedArchive.absolutePath != targetFile.absolutePath) {
                         targetFile.parentFile?.mkdirs()
                         cachedArchive.copyTo(targetFile, overwrite = true)
@@ -99,14 +101,8 @@ class OkHttpBotPackageDownloader(
                     }
                 }
 
-                // 3. Verify SHA-256 Checksum
-                val calculatedHash = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!calculatedHash.equals(expectedSha256, ignoreCase = true)) {
-                    tempFile.delete()
-                    throw SecurityException(
-                        "SHA-256 verification failed for package! Expected: $expectedSha256, Computed: $calculatedHash"
-                    )
-                }
+                // 3. Verify Package Integrity using PackageVerifier
+                packageVerifier.verifyPackage(tempFile, expectedSha256).getOrThrow()
 
                 // 4. Move temp file to final destination
                 if (targetFile.exists()) {
@@ -131,23 +127,6 @@ class OkHttpBotPackageDownloader(
                 }
                 throw e
             }
-        }
-    }
-
-    private fun verifySha256(file: File, expectedSha256: String): Boolean {
-        return try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(8192)
-                var read: Int
-                while (input.read(buffer).also { read = it } != -1) {
-                    digest.update(buffer, 0, read)
-                }
-            }
-            val calculated = digest.digest().joinToString("") { "%02x".format(it) }
-            calculated.equals(expectedSha256, ignoreCase = true)
-        } catch (_: Exception) {
-            false
         }
     }
 }
