@@ -1,0 +1,56 @@
+{
+  "$schema": "https://tapbot.dev/schemas/v1/manifest.json",
+  "id": "music-controller-bot",
+  "name": "Music Controller Bot",
+  "version": "1.0.0",
+  "description": "Control your home audio and media playback directly via Telegram.",
+  "longDescription": "Music Controller Bot runs locally in the background on your Android device. It connects via long-polling to the Telegram Bot API and handles commands like /play, /pause, /skip, and /volume, interfacing with media sessions.",
+  "category": "media",
+  "icon": "assets/icon.png",
+  "runtime": "native_art",
+  "entrypoint": "com.tapbot.bots.music.MusicBotRunner",
+  "minimumRuntimeVersion": "1.0.0",
+  "minimumAppVersion": 1,
+  "credentials": [
+    {
+      "key": "bot_token",
+      "label": "Telegram Bot Token",
+      "description": "API token obtained from @BotFather on Telegram.",
+      "required": true,
+      "secret": true,
+      "inputType": "password",
+      "placeholder": "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ",
+      "helpUrl": "https://t.me/BotFather"
+    },
+    {
+      "key": "spotify_client_id",
+      "label": "Spotify Client ID",
+      "description": "Client ID from your Spotify Developer Dashboard for remote queueing.",
+      "required": true,
+      "secret": false,
+      "inputType": "text",
+      "placeholder": "your_spotify_client_id",
+      "helpUrl": "https://developer.spotify.com/dashboard"
+    },
+    {
+      "key": "default_volume",
+      "label": "Default Volume (0-100)",
+      "description": "Initial playback volume percentage on startup.",
+      "required": false,
+      "secret": false,
+      "inputType": "number",
+      "placeholder": "75"
+    }
+  ],
+  "permissions": [
+    "INTERNET",
+    "FOREGROUND_SERVICE",
+    "NOTIFICATIONS"
+  ],
+  "packageMetadata": {
+    "author": "TapBot Publishing",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/tapbot/music-controller-bot",
+    "createdAt": "2026-09-19T00:00:00Z"
+  }
+}

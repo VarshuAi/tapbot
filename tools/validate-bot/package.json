@@ -1,0 +1,21 @@
+{
+  "name": "@tapbot/validate-bot",
+  "version": "1.0.0",
+  "description": "Official bot package validator for TapBot platform",
+  "main": "dist/index.js",
+  "bin": {
+    "validate-bot": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "validate": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "author": "TapBot Publishing",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,4 @@
+# Music Bot Entrypoint
+class=com.tapbot.bots.music.MusicBotRunner
+runtime=native_art
+version=1.0.0
