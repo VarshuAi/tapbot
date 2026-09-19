@@ -3,6 +3,7 @@ package com.tapbot.core.runner
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -10,13 +11,13 @@ import android.net.NetworkRequest
 import android.os.IBinder
 import android.os.PowerManager
 import com.tapbot.core.logging.BotLogRepository
-import com.tapbot.core.model.BotRunState
 import com.tapbot.core.model.LogLevel
 import com.tapbot.core.network.TelegramApiClient
-import com.tapbot.core.runner.engine.BotEngine
-import com.tapbot.core.runner.engine.BotExecutionContext
-import com.tapbot.core.runner.engine.EchoBotEngine
-import com.tapbot.core.security.SecureCredentialStore
+import com.tapbot.core.runner.runtime.BotRuntime
+import com.tapbot.core.runner.runtime.BotRuntimeState
+import com.tapbot.core.runner.runtime.PingPongBotRuntime
+import com.tapbot.core.runner.runtime.RuntimeContext
+import com.tapbot.core.security.CredentialStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,11 +26,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
- * Foreground Service responsible for keeping local Telegram Bots alive
- * in the background even when the app UI is dismissed.
+ * Android Foreground Service hosting the on-device Telegram Bot Runtime.
+ * Ensures the bot loop continues executing when the app UI is closed,
+ * minimized, or when the screen is locked.
  */
 class BotForegroundService : Service() {
 
@@ -37,126 +40,159 @@ class BotForegroundService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
 
     private lateinit var notificationHelper: NotificationHelper
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var powerManager: PowerManager? = null
     private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    private val activeEngines = ConcurrentHashMap<String, BotEngine>()
+    private var activeRuntime: BotRuntime? = null
+    private val lifecycleMutex = Mutex()
+
+    private val prefs: SharedPreferences by lazy {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
 
     override fun onCreate() {
         super.onCreate()
         notificationHelper = NotificationHelper(this)
         notificationHelper.createNotificationChannel()
 
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapBot:RunnerWakeLock").apply {
-            setReferenceCounted(false)
-        }
-
+        powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         registerNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        val botId = intent?.getStringExtra(EXTRA_BOT_ID)
 
         when (action) {
             ACTION_START_BOT -> {
-                if (botId != null) {
-                    startBotInternal(botId)
+                serviceScope.launch { startBotInternal() }
+            }
+            ACTION_STOP_BOT, ACTION_STOP_ALL -> {
+                serviceScope.launch { stopBotInternal() }
+            }
+            ACTION_RESTART_BOT -> {
+                serviceScope.launch {
+                    stopBotInternal()
+                    startBotInternal()
                 }
             }
-            ACTION_STOP_BOT -> {
-                if (botId != null) {
-                    stopBotInternal(botId)
+            else -> {
+                // System restart recovery (intent == null on START_STICKY)
+                if (wasRunningPersisted()) {
+                    ServiceLocator.logRepository?.appendLog(
+                        DEFAULT_BOT_ID,
+                        LogLevel.INFO,
+                        TAG,
+                        "System restarted service (START_STICKY). Recovering bot execution..."
+                    )
+                    serviceScope.launch { startBotInternal() }
                 }
-            }
-            ACTION_STOP_ALL -> {
-                stopAllInternal()
             }
         }
-
-        updateForegroundNotification()
 
         return START_STICKY
     }
 
-    private fun startBotInternal(botId: String) {
-        if (activeEngines.containsKey(botId)) {
-            return
+    private suspend fun startBotInternal() = lifecycleMutex.withLock {
+        if (activeRuntime != null && _runtimeState.value.isRunning) {
+            return@withLock
         }
 
-        wakeLock?.acquire(10 * 60 * 1000L /* 10 mins */)
-        setRunState(botId, BotRunState.Starting)
+        val credStore = ServiceLocator.pocCredentialStore
+        val logRepo = ServiceLocator.logRepository
+        val telegramApi = ServiceLocator.telegramApiClient ?: TelegramApiClient()
 
+        val token = credStore?.getToken()
+        if (token.isNullOrBlank()) {
+            val err = "Cannot start background bot: Telegram Bot Token not found in Keystore."
+            logRepo?.appendLog(DEFAULT_BOT_ID, LogLevel.ERROR, TAG, err)
+            _runtimeState.value = BotRuntimeState.Error(err)
+            return@withLock
+        }
+
+        _runtimeState.value = BotRuntimeState.Starting
+        persistRunningState(true)
+
+        // Show initial foreground notification
+        val initialNotification = notificationHelper.buildBotRunningNotification("Telegram Bot", "Starting runtime...")
+        startForeground(NotificationHelper.NOTIFICATION_ID, initialNotification)
+
+        val runtime = PingPongBotRuntime(botId = DEFAULT_BOT_ID)
+        activeRuntime = runtime
+
+        // Observe runtime state to update notification & shared state
         serviceScope.launch {
-            try {
-                val credentialStore = ServiceLocator.credentialStore
-                val logRepo = ServiceLocator.logRepository
-                val telegramApi = ServiceLocator.telegramApiClient
-
-                val credentials = credentialStore?.getAllCredentials(botId).orEmpty()
-                logRepo?.appendLog(botId, LogLevel.INFO, TAG, "Starting bot $botId in Foreground Service...")
-
-                // Factory dispatch for engine (Built-in or dynamically loaded)
-                val engine: BotEngine = when (botId) {
-                    "bot_echo" -> EchoBotEngine(botId)
-                    else -> EchoBotEngine(botId) // Fallback / mock
+            runtime.state.collect { st ->
+                _runtimeState.value = st
+                when (st) {
+                    is BotRuntimeState.Connected -> {
+                        val notif = notificationHelper.buildBotRunningNotification("@${st.botUsername}")
+                        startForeground(NotificationHelper.NOTIFICATION_ID, notif)
+                    }
+                    is BotRuntimeState.Running -> {
+                        val notif = notificationHelper.buildBotRunningNotification(
+                            "@${st.botUsername}",
+                            "Running • Polls: ${st.pollCount} | Msg: ${st.messageCount}"
+                        )
+                        startForeground(NotificationHelper.NOTIFICATION_ID, notif)
+                    }
+                    is BotRuntimeState.Error -> {
+                        logRepo?.appendLog(DEFAULT_BOT_ID, LogLevel.ERROR, TAG, "Runtime error: ${st.message}")
+                    }
+                    else -> {}
                 }
-
-                val context = BotExecutionContext(
-                    botId = botId,
-                    credentials = credentials,
-                    telegramApi = telegramApi ?: TelegramApiClient(),
-                    log = { level, tag, msg -> logRepo?.appendLog(botId, level, tag, msg) },
-                    scope = serviceScope,
-                    context = applicationContext
-                )
-
-                engine.initialize(context)
-                engine.start()
-
-                activeEngines[botId] = engine
-                setRunState(botId, BotRunState.Running(startedAt = System.currentTimeMillis()))
-                updateForegroundNotification()
-            } catch (e: Exception) {
-                setRunState(botId, BotRunState.Error(e.message ?: "Failed to start bot"))
             }
         }
-    }
 
-    private fun stopBotInternal(botId: String) {
-        val engine = activeEngines.remove(botId)
-        serviceScope.launch {
-            try {
-                engine?.stop()
-            } catch (_: Exception) {}
-            setRunState(botId, BotRunState.Stopped)
-            updateForegroundNotification()
-
-            if (activeEngines.isEmpty()) {
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
+        val context = RuntimeContext(
+            botId = runtime.botId,
+            token = token,
+            telegramApi = telegramApi,
+            log = { level, tag, msg ->
+                // Acquire temporary wake lock only during active message reply processing
+                if (level == LogLevel.INFO && msg.contains("Received message")) {
+                    acquireMessageWakeLock()
                 }
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                logRepo?.appendLog(runtime.botId, level, tag, msg)
+            },
+            scope = serviceScope
+        )
+
+        runtime.initialize(context)
+        runtime.start()
+        logRepo?.appendLog(DEFAULT_BOT_ID, LogLevel.INFO, TAG, "Bot runtime active in Foreground Service.")
+    }
+
+    private suspend fun stopBotInternal() = lifecycleMutex.withLock {
+        persistRunningState(false)
+        _runtimeState.value = BotRuntimeState.Stopping
+
+        try {
+            activeRuntime?.stop()
+        } catch (_: Exception) {}
+
+        activeRuntime = null
+        _runtimeState.value = BotRuntimeState.Stopped
+
+        ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.INFO, TAG, "Background service stopped by user.")
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /**
+     * Acquires a temporary partial wake lock for 15 seconds to ensure CPU completes
+     * processing an incoming Telegram message and sends the reply, without keeping
+     * the CPU awake indefinitely during long-polling socket waits.
+     */
+    private fun acquireMessageWakeLock() {
+        try {
+            powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapBot:MessageReplyWakeLock")?.apply {
+                setReferenceCounted(false)
+                acquire(15000L /* 15 seconds max */)
             }
-        }
-    }
-
-    private fun stopAllInternal() {
-        val botIds = activeEngines.keys().toList()
-        for (id in botIds) {
-            stopBotInternal(id)
-        }
-    }
-
-    private fun updateForegroundNotification() {
-        val count = activeEngines.size
-        val names = activeEngines.keys.toList()
-        val notification = notificationHelper.buildForegroundNotification(count, names)
-
-        if (count > 0) {
-            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "WakeLock acquisition notice: ${e.message}")
         }
     }
 
@@ -166,32 +202,31 @@ class BotForegroundService : Service() {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
 
-        connectivityManager?.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                // Resume polling if paused
-                for ((botId, _) in activeEngines) {
-                    val state = getRunState(botId).value
-                    if (state is BotRunState.PausedNoNetwork) {
-                        setRunState(botId, BotRunState.Running(startedAt = System.currentTimeMillis()))
-                    }
-                }
+                ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.INFO, TAG, "Network restored. Polling active.")
             }
 
             override fun onLost(network: Network) {
-                // Mark paused
-                for ((botId, _) in activeEngines) {
-                    setRunState(botId, BotRunState.PausedNoNetwork())
-                }
+                ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "Network connection lost. Polling suspended.")
             }
-        })
+        }
+        networkCallback = callback
+        connectivityManager?.registerNetworkCallback(request, callback)
+    }
+
+    private fun persistRunningState(isRunning: Boolean) {
+        prefs.edit().putBoolean(KEY_WAS_RUNNING, isRunning).apply()
+    }
+
+    private fun wasRunningPersisted(): Boolean {
+        return prefs.getBoolean(KEY_WAS_RUNNING, false)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         serviceJob.cancel()
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -200,26 +235,27 @@ class BotForegroundService : Service() {
         const val ACTION_START_BOT = "com.tapbot.action.START_BOT"
         const val ACTION_STOP_BOT = "com.tapbot.action.STOP_BOT"
         const val ACTION_STOP_ALL = "com.tapbot.action.STOP_ALL"
+        const val ACTION_RESTART_BOT = "com.tapbot.action.RESTART_BOT"
         const val EXTRA_BOT_ID = "extra_bot_id"
-        private const val TAG = "ForegroundService"
+        const val DEFAULT_BOT_ID = "bot_pingpong_poc"
+        private const val TAG = "BotForegroundService"
+        private const val PREFS_NAME = "tapbot_service_state"
+        private const val KEY_WAS_RUNNING = "key_was_running"
 
-        private val runStates = ConcurrentHashMap<String, MutableStateFlow<BotRunState>>()
+        private val _runtimeState = MutableStateFlow<BotRuntimeState>(BotRuntimeState.Stopped)
+        val runtimeState: StateFlow<BotRuntimeState> = _runtimeState.asStateFlow()
 
-        fun getRunState(botId: String): StateFlow<BotRunState> {
-            return runStates.computeIfAbsent(botId) { MutableStateFlow(BotRunState.Stopped) }.asStateFlow()
-        }
-
-        internal fun setRunState(botId: String, state: BotRunState) {
-            runStates.computeIfAbsent(botId) { MutableStateFlow(BotRunState.Stopped) }.value = state
+        internal fun updateStateDirectly(state: BotRuntimeState) {
+            _runtimeState.value = state
         }
     }
 }
 
 /**
- * Lightweight ServiceLocator hook for injecting modules into Android Service.
+ * ServiceLocator hook for injecting modules into Android Service.
  */
 object ServiceLocator {
-    var credentialStore: SecureCredentialStore? = null
+    var pocCredentialStore: CredentialStore? = null
     var logRepository: BotLogRepository? = null
     var telegramApiClient: TelegramApiClient? = null
 }

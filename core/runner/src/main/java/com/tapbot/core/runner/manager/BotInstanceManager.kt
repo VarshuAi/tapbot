@@ -1,26 +1,19 @@
 package com.tapbot.core.runner.manager
 
-import com.tapbot.core.logging.BotLogRepository
-import com.tapbot.core.model.LogLevel
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import com.tapbot.core.model.TelegramUser
 import com.tapbot.core.network.TelegramApiClient
-import com.tapbot.core.runner.runtime.BotRuntime
+import com.tapbot.core.runner.BotForegroundService
 import com.tapbot.core.runner.runtime.BotRuntimeState
-import com.tapbot.core.runner.runtime.PingPongBotRuntime
-import com.tapbot.core.runner.runtime.RuntimeContext
 import com.tapbot.core.security.CredentialStore
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Interface coordinating the lifecycle of the active on-device Telegram Bot.
+ * In Phase 3, this delegates to [BotForegroundService] to guarantee execution continues
+ * even when the Compose UI is closed or the screen is locked.
  */
 interface BotInstanceManager {
     val activeState: StateFlow<BotRuntimeState>
@@ -32,19 +25,13 @@ interface BotInstanceManager {
 }
 
 class DefaultBotInstanceManager(
+    private val context: Context? = null,
     private val credentialStore: CredentialStore,
     private val telegramApi: TelegramApiClient,
-    private val logRepository: BotLogRepository,
-    private val runtimeFactory: () -> BotRuntime = { PingPongBotRuntime() }
+    private val serviceLauncher: ((action: String) -> Unit)? = null
 ) : BotInstanceManager {
 
-    private val managerScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val mutex = Mutex()
-
-    private var activeRuntime: BotRuntime? = null
-
-    private val _activeState = MutableStateFlow<BotRuntimeState>(BotRuntimeState.Stopped)
-    override val activeState: StateFlow<BotRuntimeState> = _activeState.asStateFlow()
+    override val activeState: StateFlow<BotRuntimeState> = BotForegroundService.runtimeState
 
     override suspend fun validateToken(token: String): Result<TelegramUser> {
         if (token.isBlank()) {
@@ -53,60 +40,42 @@ class DefaultBotInstanceManager(
         return telegramApi.getMe(token.trim())
     }
 
-    override suspend fun start(): Result<Unit> = mutex.withLock {
-        try {
-            val token = credentialStore.getToken()
-            if (token.isNullOrBlank()) {
-                val err = "No Telegram Bot Token saved in Keystore."
-                _activeState.value = BotRuntimeState.Error(err)
-                return Result.failure(IllegalStateException(err))
-            }
-
-            if (activeRuntime != null && activeRuntime?.state?.value?.isRunning == true) {
-                return Result.success(Unit)
-            }
-
-            val runtime = runtimeFactory()
-            activeRuntime = runtime
-
-            // Forward state updates
-            managerScope.launch {
-                runtime.state.collect { st ->
-                    _activeState.value = st
-                }
-            }
-
-            val context = RuntimeContext(
-                botId = runtime.botId,
-                token = token,
-                telegramApi = telegramApi,
-                log = { level, tag, msg -> logRepository.appendLog(runtime.botId, level, tag, msg) },
-                scope = managerScope
-            )
-
-            runtime.initialize(context)
-            runtime.start()
-
-            Result.success(Unit)
-        } catch (e: Exception) {
-            _activeState.value = BotRuntimeState.Error(e.message ?: "Failed to start bot")
-            Result.failure(e)
+    override suspend fun start(): Result<Unit> {
+        val token = credentialStore.getToken()
+        if (token.isNullOrBlank()) {
+            val err = "No Telegram Bot Token saved in Keystore."
+            BotForegroundService.updateStateDirectly(BotRuntimeState.Error(err))
+            return Result.failure(IllegalStateException(err))
         }
+
+        launchService(BotForegroundService.ACTION_START_BOT, isForeground = true)
+        return Result.success(Unit)
     }
 
-    override suspend fun stop(): Result<Unit> = mutex.withLock {
-        try {
-            activeRuntime?.stop()
-            activeRuntime = null
-            _activeState.value = BotRuntimeState.Stopped
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    override suspend fun stop(): Result<Unit> {
+        launchService(BotForegroundService.ACTION_STOP_BOT, isForeground = false)
+        return Result.success(Unit)
     }
 
     override suspend fun restart(): Result<Unit> {
-        stop()
-        return start()
+        launchService(BotForegroundService.ACTION_RESTART_BOT, isForeground = true)
+        return Result.success(Unit)
+    }
+
+    private fun launchService(action: String, isForeground: Boolean) {
+        if (serviceLauncher != null) {
+            serviceLauncher.invoke(action)
+            return
+        }
+
+        val ctx = context ?: return
+        val intent = Intent(ctx, BotForegroundService::class.java).apply {
+            this.action = action
+        }
+        if (isForeground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ctx.startForegroundService(intent)
+        } else {
+            ctx.startService(intent)
+        }
     }
 }

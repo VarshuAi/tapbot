@@ -62,16 +62,16 @@ class TapBotApplication : Application() {
         // 5. Initialize runner service controller
         botServiceController = AndroidBotServiceController(this)
 
-        // 6. Initialize BotInstanceManager for Phase 2 Proof of Concept
-        botInstanceManager = DefaultBotInstanceManager(
-            credentialStore = pocCredentialStore,
-            telegramApi = telegramApiClient,
-            logRepository = logRepository
-        )
-
-        // 7. Connect ServiceLocator hooks for BotForegroundService
-        ServiceLocator.credentialStore = credentialStore
+        // 6. Connect ServiceLocator hooks for BotForegroundService
+        ServiceLocator.pocCredentialStore = pocCredentialStore
         ServiceLocator.logRepository = logRepository
         ServiceLocator.telegramApiClient = telegramApiClient
+
+        // 7. Initialize BotInstanceManager for Phase 3 Background Execution
+        botInstanceManager = DefaultBotInstanceManager(
+            context = this,
+            credentialStore = pocCredentialStore,
+            telegramApi = telegramApiClient
+        )
     }
 }

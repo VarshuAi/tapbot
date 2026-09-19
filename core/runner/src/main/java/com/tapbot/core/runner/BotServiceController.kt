@@ -4,7 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.tapbot.core.model.BotRunState
+import com.tapbot.core.runner.runtime.BotRuntimeState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 interface BotServiceController {
     fun startBot(botId: String)
@@ -16,6 +22,28 @@ interface BotServiceController {
 class AndroidBotServiceController(
     private val context: Context
 ) : BotServiceController {
+
+    private val scope = CoroutineScope(Dispatchers.Default)
+    private val mappedFlow = MutableStateFlow<BotRunState>(BotRunState.Stopped)
+
+    init {
+        scope.launch {
+            BotForegroundService.runtimeState.collect { st ->
+                mappedFlow.value = when (st) {
+                    is BotRuntimeState.Stopped -> BotRunState.Stopped
+                    is BotRuntimeState.Starting -> BotRunState.Starting
+                    is BotRuntimeState.Connected -> BotRunState.Starting
+                    is BotRuntimeState.Running -> BotRunState.Running(
+                        startedAt = st.startedAt,
+                        pollCount = st.pollCount,
+                        lastActivityAt = st.lastActivityAt
+                    )
+                    is BotRuntimeState.Stopping -> BotRunState.Stopped
+                    is BotRuntimeState.Error -> BotRunState.Error(st.message, st.timestamp)
+                }
+            }
+        }
+    }
 
     override fun startBot(botId: String) {
         val intent = Intent(context, BotForegroundService::class.java).apply {
@@ -45,6 +73,6 @@ class AndroidBotServiceController(
     }
 
     override fun getBotRunState(botId: String): StateFlow<BotRunState> {
-        return BotForegroundService.getRunState(botId)
+        return mappedFlow.asStateFlow()
     }
 }

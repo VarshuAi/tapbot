@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 /**
  * Handles creation and updates of the persistent notification required
  * by Android Foreground Services.
+ * Configured with non-aggressive IMPORTANCE_LOW to minimize user disruption.
  */
 class NotificationHelper(private val context: Context) {
 
@@ -25,31 +26,27 @@ class NotificationHelper(private val context: Context) {
                 "TapBot Runner Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows the active local Telegram bots running in the background"
+                description = "Shows active Telegram bots running locally in the background"
                 setShowBadge(false)
+                enableVibration(false)
+                enableLights(false)
             }
             notificationManager.createNotificationChannel(channel)
         }
     }
 
-    fun buildForegroundNotification(
-        runningBotsCount: Int,
-        activeBotNames: List<String>
+    /**
+     * Builds the foreground service notification when a Telegram bot is actively running.
+     * Follows Phase 3 specifications: displays bot handle and provides "Open" and "Stop" actions.
+     */
+    fun buildBotRunningNotification(
+        botDisplayName: String,
+        statusDetail: String = "Running locally on device"
     ): Notification {
-        val title = if (runningBotsCount == 0) {
-            "TapBot Runner Idle"
-        } else {
-            "TapBot Running $runningBotsCount Bot${if (runningBotsCount > 1) "s" else ""}"
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-
-        val content = if (activeBotNames.isEmpty()) {
-            "Background runner service is active"
-        } else {
-            activeBotNames.joinToString(", ")
-        }
-
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val pendingIntent = if (launchIntent != null) {
+        val openPendingIntent = if (launchIntent != null) {
             PendingIntent.getActivity(
                 context,
                 0,
@@ -61,7 +58,7 @@ class NotificationHelper(private val context: Context) {
         }
 
         val stopIntent = Intent(context, BotForegroundService::class.java).apply {
-            action = BotForegroundService.ACTION_STOP_ALL
+            action = BotForegroundService.ACTION_STOP_BOT
         }
         val stopPendingIntent = PendingIntent.getService(
             context,
@@ -71,18 +68,40 @@ class NotificationHelper(private val context: Context) {
         )
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(content)
+            .setContentTitle("TapBot Runner")
+            .setContentText("$botDisplayName is running")
+            .setSubText(statusDetail)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop All", stopPendingIntent)
 
-        if (pendingIntent != null) {
-            builder.setContentIntent(pendingIntent)
+        // Action 1: Open Application UI
+        if (openPendingIntent != null) {
+            builder.setContentIntent(openPendingIntent)
+            builder.addAction(
+                android.R.drawable.ic_menu_view,
+                "Open",
+                openPendingIntent
+            )
         }
 
+        // Action 2: Stop Local Bot Runtime
+        builder.addAction(
+            android.R.drawable.ic_menu_close_clear_cancel,
+            "Stop",
+            stopPendingIntent
+        )
+
         return builder.build()
+    }
+
+    fun buildForegroundNotification(
+        runningBotsCount: Int,
+        activeBotNames: List<String>
+    ): Notification {
+        val primaryName = if (activeBotNames.isNotEmpty()) activeBotNames.first() else "Telegram Bot"
+        return buildBotRunningNotification(primaryName)
     }
 
     companion object {

@@ -1,12 +1,10 @@
 package com.tapbot.core.runner
 
-import com.tapbot.core.logging.InMemoryRingBufferLogRepository
 import com.tapbot.core.model.TelegramUser
 import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.manager.DefaultBotInstanceManager
 import com.tapbot.core.runner.runtime.BotRuntimeState
 import com.tapbot.core.security.CredentialStore
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,22 +34,81 @@ class BotInstanceManagerTest {
     fun `start fails when no token is present in CredentialStore`() = runBlocking {
         val credStore = FakeCredentialStore(null)
         val api = FakeTelegramApiClient()
-        val logRepo = InMemoryRingBufferLogRepository()
+        val actions = mutableListOf<String>()
 
-        val manager = DefaultBotInstanceManager(credStore, api, logRepo)
+        val manager = DefaultBotInstanceManager(
+            credentialStore = credStore,
+            telegramApi = api,
+            serviceLauncher = { actions.add(it) }
+        )
         val result = manager.start()
 
         assertTrue(result.isFailure)
         assertTrue(manager.activeState.value is BotRuntimeState.Error)
+        assertTrue(actions.isEmpty())
+    }
+
+    @Test
+    fun `start triggers ACTION_START_BOT when token exists`() = runBlocking {
+        val credStore = FakeCredentialStore("VALID_TOKEN")
+        val api = FakeTelegramApiClient()
+        val actions = mutableListOf<String>()
+
+        val manager = DefaultBotInstanceManager(
+            credentialStore = credStore,
+            telegramApi = api,
+            serviceLauncher = { actions.add(it) }
+        )
+        val result = manager.start()
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(BotForegroundService.ACTION_START_BOT), actions)
+    }
+
+    @Test
+    fun `stop triggers ACTION_STOP_BOT`() = runBlocking {
+        val credStore = FakeCredentialStore("VALID_TOKEN")
+        val api = FakeTelegramApiClient()
+        val actions = mutableListOf<String>()
+
+        val manager = DefaultBotInstanceManager(
+            credentialStore = credStore,
+            telegramApi = api,
+            serviceLauncher = { actions.add(it) }
+        )
+        val result = manager.stop()
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(BotForegroundService.ACTION_STOP_BOT), actions)
+    }
+
+    @Test
+    fun `restart triggers ACTION_RESTART_BOT`() = runBlocking {
+        val credStore = FakeCredentialStore("VALID_TOKEN")
+        val api = FakeTelegramApiClient()
+        val actions = mutableListOf<String>()
+
+        val manager = DefaultBotInstanceManager(
+            credentialStore = credStore,
+            telegramApi = api,
+            serviceLauncher = { actions.add(it) }
+        )
+        val result = manager.restart()
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(BotForegroundService.ACTION_RESTART_BOT), actions)
     }
 
     @Test
     fun `validateToken checks token with Telegram API`() = runBlocking {
         val credStore = FakeCredentialStore()
         val api = FakeTelegramApiClient()
-        val logRepo = InMemoryRingBufferLogRepository()
 
-        val manager = DefaultBotInstanceManager(credStore, api, logRepo)
+        val manager = DefaultBotInstanceManager(
+            credentialStore = credStore,
+            telegramApi = api,
+            serviceLauncher = {}
+        )
 
         val validRes = manager.validateToken("VALID_TOKEN")
         assertTrue(validRes.isSuccess)
