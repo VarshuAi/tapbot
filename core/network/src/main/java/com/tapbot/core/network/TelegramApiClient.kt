@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * Client for communicating with the official Telegram Bot API via HTTPS.
  * Executes on the user's Android device.
  */
-class TelegramApiClient(
+open class TelegramApiClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -36,7 +36,7 @@ class TelegramApiClient(
     /**
      * Verifies the bot token and returns information about the bot.
      */
-    suspend fun getMe(token: String): Result<TelegramUser> = runCatching {
+    open suspend fun getMe(token: String): Result<TelegramUser> = runCatching {
         withContext(Dispatchers.IO) {
             val url = "$BASE_URL/bot$token/getMe"
             val request = Request.Builder().url(url).get().build()
@@ -56,7 +56,7 @@ class TelegramApiClient(
      * Long-polling request to fetch new updates.
      * Uses Telegram's long-polling HTTP mechanism.
      */
-    suspend fun getUpdates(
+    open suspend fun getUpdates(
         token: String,
         offset: Long? = null,
         timeoutSeconds: Int = 30
@@ -81,7 +81,7 @@ class TelegramApiClient(
     /**
      * Sends a text message to a chat or channel.
      */
-    suspend fun sendMessage(
+    open suspend fun sendMessage(
         token: String,
         chatId: Long,
         text: String,

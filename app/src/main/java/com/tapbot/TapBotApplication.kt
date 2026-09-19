@@ -9,6 +9,10 @@ import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.AndroidBotServiceController
 import com.tapbot.core.runner.BotServiceController
 import com.tapbot.core.runner.ServiceLocator
+import com.tapbot.core.runner.manager.BotInstanceManager
+import com.tapbot.core.runner.manager.DefaultBotInstanceManager
+import com.tapbot.core.security.CredentialStore
+import com.tapbot.core.security.KeystoreCredentialStore
 import com.tapbot.core.security.KeystoreSecureCredentialStore
 import com.tapbot.core.security.SecureCredentialStore
 
@@ -33,11 +37,18 @@ class TapBotApplication : Application() {
     lateinit var botServiceController: BotServiceController
         private set
 
+    lateinit var pocCredentialStore: CredentialStore
+        private set
+
+    lateinit var botInstanceManager: BotInstanceManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
 
         // 1. Initialize secure storage backed by Android Keystore
         credentialStore = KeystoreSecureCredentialStore(this)
+        pocCredentialStore = KeystoreCredentialStore(this)
 
         // 2. Initialize in-memory ring buffer logging
         logRepository = InMemoryRingBufferLogRepository(maxCapacityPerBot = 500)
@@ -51,7 +62,14 @@ class TapBotApplication : Application() {
         // 5. Initialize runner service controller
         botServiceController = AndroidBotServiceController(this)
 
-        // 6. Connect ServiceLocator hooks for BotForegroundService
+        // 6. Initialize BotInstanceManager for Phase 2 Proof of Concept
+        botInstanceManager = DefaultBotInstanceManager(
+            credentialStore = pocCredentialStore,
+            telegramApi = telegramApiClient,
+            logRepository = logRepository
+        )
+
+        // 7. Connect ServiceLocator hooks for BotForegroundService
         ServiceLocator.credentialStore = credentialStore
         ServiceLocator.logRepository = logRepository
         ServiceLocator.telegramApiClient = telegramApiClient

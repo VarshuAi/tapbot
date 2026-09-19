@@ -23,7 +23,7 @@ class InMemoryRingBufferLogRepository(
             botId = botId,
             level = level,
             tag = tag,
-            message = message
+            message = SecretRedactor.redact(message)
         )
         val flow = botLogFlows.computeIfAbsent(botId) { MutableStateFlow(emptyList()) }
 
