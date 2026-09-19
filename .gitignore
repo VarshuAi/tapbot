@@ -9,3 +9,8 @@ captures/
 .externalNativeBuild/
 .cxx/
 local.properties
+
+# Cloudflare Workers & Node
+node_modules/
+.wrangler/
+dist/

@@ -1,13 +1,19 @@
 name = "tapbot-catalog-backend"
 main = "src/index.ts"
 compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "tapbot_catalog"
-database_id = "xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+database_id = "tapbot-catalog-d1-id"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "tapbot-packages"
 preview_bucket_name = "tapbot-packages-preview"
+
+[vars]
+ADMIN_API_KEY = "dev-admin-secret-key-change-in-prod"
+ENVIRONMENT = "development"

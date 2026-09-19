@@ -4,6 +4,7 @@ import android.app.Application
 import com.tapbot.core.logging.BotLogRepository
 import com.tapbot.core.logging.InMemoryRingBufferLogRepository
 import com.tapbot.core.network.CatalogApi
+import com.tapbot.core.network.CloudflareCatalogApi
 import com.tapbot.core.network.MockCatalogApi
 import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.AndroidBotServiceController
@@ -53,8 +54,8 @@ class TapBotApplication : Application() {
         // 2. Initialize in-memory ring buffer logging
         logRepository = InMemoryRingBufferLogRepository(maxCapacityPerBot = 500)
 
-        // 3. Initialize Catalog client
-        catalogApi = MockCatalogApi()
+        // 3. Initialize Catalog client connecting to Cloudflare Workers / D1 API
+        catalogApi = CloudflareCatalogApi(fallback = MockCatalogApi())
 
         // 4. Initialize Telegram API client
         telegramApiClient = TelegramApiClient()

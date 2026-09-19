@@ -1,0 +1,32 @@
+{
+  "name": "tapbot-backend",
+  "version": "1.0.0",
+  "description": "TapBot Catalog & Package Backend powered by Cloudflare Workers, D1, and R2",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:prod": "wrangler d1 migrations apply DB --remote"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "d1",
+    "r2",
+    "tapbot",
+    "telegram-bot"
+  ],
+  "author": "TapBot Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.99.0"
+  }
+}
