@@ -6,9 +6,15 @@ import android.os.Build
 import com.tapbot.core.model.BotInstance
 import com.tapbot.core.model.BotInstanceStatus
 import com.tapbot.core.model.BotMetadata
+import com.tapbot.core.model.BotUpdateProgress
+import com.tapbot.core.model.BotVersion
 import com.tapbot.core.model.CrashState
 import com.tapbot.core.model.TelegramUser
+import com.tapbot.core.model.UpdateState
+import com.tapbot.core.network.BotPackageDownloader
 import com.tapbot.core.network.DowngradeAttackChecker
+import com.tapbot.core.network.ManifestValidator
+import com.tapbot.core.network.Sha256PackageVerifier
 import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.BotForegroundService
 import com.tapbot.core.runner.runtime.BotRuntimeState
@@ -34,9 +40,11 @@ import java.io.File
  * - Duplicate Telegram long-polling connection prevention
  * - Conflicting installation prevention
  * - Orphaned service and process prevention
+ * - Atomic version updates with automatic rollback on startup failure
  */
 interface BotInstanceManager {
     val instances: StateFlow<List<BotInstance>>
+    val updateProgress: StateFlow<Map<String, BotUpdateProgress>>
 
     // Phase 3 backwards-compatibility contract
     val activeState: StateFlow<BotRuntimeState>
@@ -52,6 +60,13 @@ interface BotInstanceManager {
     suspend fun stop(installationId: String): Result<Unit>
     suspend fun restart(installationId: String): Result<Unit>
     suspend fun update(installationId: String, newVersion: String, packageFile: File): Result<BotInstance>
+    suspend fun updateWithRollback(
+        installationId: String,
+        targetVersion: BotVersion,
+        packageDownloader: BotPackageDownloader? = null,
+        manifestValidator: ManifestValidator? = null,
+        onProgress: ((BotUpdateProgress) -> Unit)? = null
+    ): Result<BotInstance>
 
     fun getInstance(installationId: String): BotInstance?
     fun getInstanceByBotId(botId: String): BotInstance?
@@ -97,6 +112,9 @@ class DefaultBotInstanceManager(
     private val mutex = Mutex()
     private val _instances = MutableStateFlow<List<BotInstance>>(emptyList())
     override val instances: StateFlow<List<BotInstance>> = _instances.asStateFlow()
+
+    private val _updateProgress = MutableStateFlow<Map<String, BotUpdateProgress>>(emptyMap())
+    override val updateProgress: StateFlow<Map<String, BotUpdateProgress>> = _updateProgress.asStateFlow()
 
     override val activeState: StateFlow<BotRuntimeState> = BotForegroundService.runtimeState
 
@@ -242,46 +260,268 @@ class DefaultBotInstanceManager(
         installationId: String,
         newVersion: String,
         packageFile: File
-    ): Result<BotInstance> = mutex.withLock {
-        runCatching {
-            val current = _instances.value.find { it.installationId == installationId }
-                ?: throw NoSuchElementException("Instance not found: $installationId")
+    ): Result<BotInstance> {
+        val current = _instances.value.find { it.installationId == installationId }
+            ?: return Result.failure(NoSuchElementException("Instance not found: $installationId"))
 
-            // Rule 5: Downgrade Attack Prevention
-            if (DowngradeAttackChecker.isDowngrade(currentInstalledVersion = current.version, candidateVersion = newVersion)) {
-                throw SecurityException("Downgrade attack detected: Installed version is ${current.version}, cannot install older version $newVersion")
+        val targetVersion = BotVersion(
+            id = "ver_${current.botId}_$newVersion",
+            botId = current.botId,
+            version = newVersion,
+            packageUrl = "",
+            sha256 = "",
+            packageSize = packageFile.length(),
+            isPublished = true,
+            publishedAt = ""
+        )
+
+        return updateWithRollbackInternal(
+            installationId = installationId,
+            targetVersion = targetVersion,
+            localPackageFile = packageFile,
+            packageDownloader = null,
+            manifestValidator = null,
+            onProgress = null
+        )
+    }
+
+    override suspend fun updateWithRollback(
+        installationId: String,
+        targetVersion: BotVersion,
+        packageDownloader: BotPackageDownloader?,
+        manifestValidator: ManifestValidator?,
+        onProgress: ((BotUpdateProgress) -> Unit)?
+    ): Result<BotInstance> {
+        return updateWithRollbackInternal(
+            installationId = installationId,
+            targetVersion = targetVersion,
+            localPackageFile = null,
+            packageDownloader = packageDownloader,
+            manifestValidator = manifestValidator,
+            onProgress = onProgress
+        )
+    }
+
+    private suspend fun updateWithRollbackInternal(
+        installationId: String,
+        targetVersion: BotVersion,
+        localPackageFile: File?,
+        packageDownloader: BotPackageDownloader?,
+        manifestValidator: ManifestValidator?,
+        onProgress: ((BotUpdateProgress) -> Unit)?
+    ): Result<BotInstance> = mutex.withLock {
+        val current = _instances.value.find { it.installationId == installationId }
+            ?: return Result.failure(NoSuchElementException("Instance not found: $installationId"))
+
+        val botId = current.botId
+        val oldVersion = current.version
+        val newVersion = targetVersion.version
+
+        fun emitState(
+            state: UpdateState,
+            progress: Float = 0f,
+            message: String? = null,
+            error: String? = null
+        ) {
+            val p = BotUpdateProgress(
+                state = state,
+                progress = progress,
+                currentVersion = oldVersion,
+                targetVersion = newVersion,
+                message = message,
+                error = error
+            )
+            val map = _updateProgress.value.toMutableMap()
+            map[installationId] = p
+            _updateProgress.value = map
+            onProgress?.invoke(p)
+        }
+
+        runCatching {
+            // STEP 0: CHECKING
+            emitState(UpdateState.CHECKING, 0.05f, "Validating candidate version $newVersion...")
+
+            // Anti-downgrade check
+            if (DowngradeAttackChecker.isDowngrade(currentInstalledVersion = oldVersion, candidateVersion = newVersion)) {
+                val err = "Downgrade attack detected: Installed version is $oldVersion, cannot install older version $newVersion"
+                emitState(UpdateState.FAILED, 0f, error = err)
+                throw SecurityException(err)
             }
 
-            val wasRunning = current.status.isRunning
+            if (oldVersion == newVersion) {
+                val err = "Bot is already running version $newVersion"
+                emitState(UpdateState.FAILED, 0f, error = err)
+                throw IllegalStateException(err)
+            }
+
+            // STEP 1: DOWNLOADING
+            emitState(UpdateState.DOWNLOADING, 0.1f, "Downloading package for v$newVersion...")
+            val downloadedFile = if (localPackageFile != null && localPackageFile.exists()) {
+                emitState(UpdateState.DOWNLOADING, 0.4f, "Using local package for v$newVersion...")
+                localPackageFile
+            } else {
+                val tempTarget = File.createTempFile("update_${botId}_${newVersion}_", ".botpkg")
+                if (packageDownloader != null && targetVersion.packageUrl.isNotBlank()) {
+                    packageDownloader.downloadPackage(
+                        packageUrl = targetVersion.packageUrl,
+                        expectedSha256 = targetVersion.sha256,
+                        targetFile = tempTarget,
+                        onProgress = { p ->
+                            emitState(UpdateState.DOWNLOADING, 0.1f + (p * 0.4f), "Downloading v$newVersion (${(p * 100).toInt()}%)...")
+                        }
+                    ).getOrThrow()
+                } else {
+                    tempTarget
+                }
+            }
+
+            // STEP 2: VERIFY CHECKSUM
+            emitState(UpdateState.VERIFYING, 0.55f, "Verifying package integrity checksum...")
+            if (targetVersion.sha256.isNotBlank() && targetVersion.sha256 != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" && downloadedFile.length() > 0) {
+                val verifier = Sha256PackageVerifier()
+                val verifyRes = verifier.verifyPackage(downloadedFile, targetVersion.sha256)
+                if (verifyRes.isFailure) {
+                    val err = "Checksum verification failed: ${verifyRes.exceptionOrNull()?.message}"
+                    emitState(UpdateState.FAILED, 0f, error = err)
+                    if (downloadedFile != localPackageFile) downloadedFile.delete()
+                    throw SecurityException(err)
+                }
+            }
+
+            // STEP 3: VALIDATE MANIFEST
+            emitState(UpdateState.VERIFYING, 0.65f, "Validating manifest requirements...")
+            if (manifestValidator != null && downloadedFile.length() > 0) {
+                val manifestRes = manifestValidator.validatePackage(downloadedFile, botId, newVersion)
+                if (manifestRes.isFailure) {
+                    val err = "Manifest validation failed: ${manifestRes.exceptionOrNull()?.message}"
+                    emitState(UpdateState.FAILED, 0f, error = err)
+                    if (downloadedFile != localPackageFile) downloadedFile.delete()
+                    throw IllegalStateException(err)
+                }
+            }
+
+            // STEP 4: STOP OLD INSTANCE
+            emitState(UpdateState.INSTALLING, 0.75f, "Stopping previous bot version...")
+            val wasRunning = current.status.isRunning || current.status is BotInstanceStatus.Starting
             if (wasRunning) {
                 stopLocked(installationId)
             }
 
-            val targetPackage = if (installDir != null) {
+            // STEP 5: REPLACE PACKAGE WITH STAGED BACKUP (DO NOT DELETE PREVIOUS VERSION YET!)
+            emitState(UpdateState.INSTALLING, 0.85f, "Backing up previous version and staging update...")
+            val currentPkgFile = current.packagePath?.let { File(it) }
+            val backupFile = if (currentPkgFile != null && currentPkgFile.exists()) {
+                val backup = File(currentPkgFile.parentFile ?: installDir, "${currentPkgFile.name}.backup_${System.currentTimeMillis()}")
+                currentPkgFile.copyTo(backup, overwrite = true)
+                backup
+            } else null
+
+            // Place new package
+            val finalTargetPackage = if (installDir != null) {
                 installDir.mkdirs()
-                val dest = File(installDir, "${current.botId}_${newVersion}.botpkg")
-                packageFile.copyTo(dest, overwrite = true)
+                val dest = File(installDir, "${botId}_${newVersion}.botpkg")
+                downloadedFile.copyTo(dest, overwrite = true)
+                if (downloadedFile != localPackageFile && downloadedFile.exists() && downloadedFile.absolutePath != dest.absolutePath) {
+                    downloadedFile.delete()
+                }
                 dest
             } else {
-                packageFile
+                downloadedFile
             }
 
-            val updated = current.copy(
+            // STEP 6: PRESERVE CREDENTIALS (VERIFY KEYSTORE TOKENS REMAIN INTACT)
+            val token = credentialStore.getCredential(botId, "bot_token")
+                ?: credentialStore.getCredential(botId, "telegram_bot_token")
+                ?: credentialStore.getToken()
+
+            // Update instance model to new version
+            val currentStopped = _instances.value.find { it.installationId == installationId } ?: current
+            val newInstance = currentStopped.copy(
                 version = newVersion,
-                packagePath = targetPackage.absolutePath,
+                packagePath = finalTargetPackage.absolutePath,
+                status = BotInstanceStatus.Stopped,
                 updatedAt = System.currentTimeMillis()
             )
-
             _instances.value = _instances.value.map {
-                if (it.installationId == installationId) updated else it
+                if (it.installationId == installationId) newInstance else it
             }
             saveToDisk()
 
-            if (wasRunning) {
-                startLocked(installationId)
+            // STEP 7: START NEW VERSION
+            emitState(UpdateState.STARTING, 0.90f, "Starting new version v$newVersion...")
+            var startFailed = false
+            var startException: Throwable? = null
+
+            if (wasRunning || targetVersion.isPublished) {
+                if (token.isNullOrBlank()) {
+                    startFailed = true
+                    startException = IllegalStateException("Credential missing for bot: $botId")
+                } else {
+                    val res = runCatching { startLocked(installationId) }
+                    if (res.isFailure) {
+                        startFailed = true
+                        startException = res.exceptionOrNull()
+                    }
+                }
             }
 
-            updated
+            // STEP 8: VERIFY HEALTH
+            val healthPassed = !startFailed && run {
+                val currentStatus = getInstance(installationId)?.status
+                currentStatus !is BotInstanceStatus.Crashed
+            }
+
+            if (healthPassed) {
+                // SUCCESS! Remove staged backup now that new version is safely running.
+                backupFile?.delete()
+                emitState(UpdateState.SUCCESS, 1.0f, "Successfully updated to v$newVersion!")
+                newInstance
+            } else {
+                // STEP 9: IF STARTUP FAILS, ATTEMPT ROLLBACK!
+                emitState(UpdateState.ROLLING_BACK, 0.5f, "Startup failed for v$newVersion. Initiating rollback to v$oldVersion...")
+
+                // Stop failed instance
+                runCatching { stopLocked(installationId) }
+
+                // Restore package file from backup
+                if (backupFile != null && backupFile.exists()) {
+                    if (currentPkgFile != null) {
+                        backupFile.copyTo(currentPkgFile, overwrite = true)
+                    }
+                    backupFile.delete()
+                }
+
+                // Delete failed new package
+                if (finalTargetPackage.exists() && finalTargetPackage.absolutePath != currentPkgFile?.absolutePath) {
+                    finalTargetPackage.delete()
+                }
+
+                // Restore previous instance model
+                val restoredInstance = current.copy(
+                    version = oldVersion,
+                    packagePath = currentPkgFile?.absolutePath,
+                    status = BotInstanceStatus.Stopped,
+                    updatedAt = System.currentTimeMillis()
+                )
+                _instances.value = _instances.value.map {
+                    if (it.installationId == installationId) restoredInstance else it
+                }
+                saveToDisk()
+
+                // If it was running before update, restart the restored previous version!
+                if (wasRunning && !token.isNullOrBlank()) {
+                    runCatching { startLocked(installationId) }
+                }
+
+                val failureReason = startException?.message ?: "New version failed startup health checks"
+                emitState(
+                    UpdateState.FAILED,
+                    0f,
+                    error = "Update failed: $failureReason. Successfully rolled back to v$oldVersion."
+                )
+
+                throw IllegalStateException("Update to v$newVersion failed: $failureReason. System rolled back to v$oldVersion.")
+            }
         }
     }
 

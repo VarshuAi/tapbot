@@ -42,6 +42,8 @@ function mapVersionRow(row: BotVersionRow, baseUrl: string): BotVersionDto {
         sha256: row.sha256,
         releaseNotes: row.release_notes,
         minimumAppVersion: row.minimum_app_version,
+        minimumRuntimeVersion: row.minimum_runtime_version || '1.0.0',
+        status: row.status || 'published',
         publishedAt: row.published_at,
         downloadUrl: `${baseUrl}/api/v1/packages/${encodeURIComponent(row.package_key)}`
     };
@@ -141,7 +143,46 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL): 
         });
     }
 
-    // 3. GET /api/v1/bots/:id/versions - List version changelog for a bot
+    // 3a. GET /api/v1/bots/:id/versions/latest - Get latest published version
+    const latestVersionMatch = path.match(/^\/api\/v1\/bots\/([^/]+)\/versions\/latest$/);
+    if (latestVersionMatch && request.method === 'GET') {
+        const idOrSlug = decodeURIComponent(latestVersionMatch[1]);
+
+        const bot = await env.DB.prepare(
+            'SELECT id FROM bots WHERE id = ? OR slug = ?'
+        ).bind(idOrSlug, idOrSlug).first<BotRow>();
+
+        if (!bot) {
+            return jsonResponse({
+                success: false,
+                error: {
+                    code: 'NOT_FOUND',
+                    message: `Bot not found with identifier: ${idOrSlug}`
+                }
+            }, 404);
+        }
+
+        const latestVersion = await env.DB.prepare(
+            "SELECT * FROM bot_versions WHERE bot_id = ? AND status = 'published' ORDER BY published_at DESC LIMIT 1"
+        ).bind(bot.id).first<BotVersionRow>();
+
+        if (!latestVersion) {
+            return jsonResponse({
+                success: false,
+                error: {
+                    code: 'NOT_FOUND',
+                    message: `No published version found for bot: ${idOrSlug}`
+                }
+            }, 404);
+        }
+
+        return jsonResponse({
+            success: true,
+            data: mapVersionRow(latestVersion, baseUrl)
+        });
+    }
+
+    // 3b. GET /api/v1/bots/:id/versions - List published version changelog for a bot
     const versionsMatch = path.match(/^\/api\/v1\/bots\/([^/]+)\/versions$/);
     if (versionsMatch && request.method === 'GET') {
         const idOrSlug = decodeURIComponent(versionsMatch[1]);
@@ -162,7 +203,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL): 
         }
 
         const { results: versions } = await env.DB.prepare(
-            'SELECT * FROM bot_versions WHERE bot_id = ? ORDER BY published_at DESC'
+            "SELECT * FROM bot_versions WHERE bot_id = ? AND status = 'published' ORDER BY published_at DESC"
         ).bind(bot.id).all<BotVersionRow>();
 
         const dtos: BotVersionDto[] = (versions || []).map((row) => mapVersionRow(row, baseUrl));

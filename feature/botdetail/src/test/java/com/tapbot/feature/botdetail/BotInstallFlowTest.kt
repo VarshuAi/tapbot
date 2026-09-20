@@ -79,6 +79,9 @@ class BotInstallFlowTest {
             Result.success(listOf("All", "Productivity"))
         override suspend fun getBotDetails(botId: String, forceRefresh: Boolean): Result<BotMetadata> =
             if (botId == sampleBot.id) Result.success(sampleBot) else Result.failure(NoSuchElementException(botId))
+        override suspend fun getBotVersions(botId: String): Result<List<com.tapbot.core.model.BotVersion>> = Result.success(emptyList())
+        override suspend fun getLatestVersion(botId: String): Result<com.tapbot.core.model.BotVersion?> = Result.success(null)
+        override suspend fun checkForUpdate(botId: String, currentVersion: String): Result<com.tapbot.core.model.BotVersion?> = Result.success(null)
     }
 
     private val fakeCredentialStore = object : SecureCredentialStore {

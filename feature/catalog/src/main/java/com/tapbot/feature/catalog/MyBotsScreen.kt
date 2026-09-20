@@ -3,6 +3,7 @@ package com.tapbot.feature.catalog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,6 +39,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -46,9 +50,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tapbot.core.model.BotInstance
 import com.tapbot.core.model.BotInstanceStatus
+import com.tapbot.core.model.BotUpdateProgress
+import com.tapbot.core.model.BotVersion
+import com.tapbot.core.model.UpdateState
 
 /**
  * "MY BOTS" Screen displaying real-time independent state for all locally installed bots.
@@ -60,11 +68,16 @@ import com.tapbot.core.model.BotInstanceStatus
 @Composable
 fun MyBotsContent(
     instances: List<BotInstance>,
+    availableUpdates: Map<String, BotVersion> = emptyMap(),
+    updateProgress: Map<String, BotUpdateProgress> = emptyMap(),
     onStartBot: (String) -> Unit,
     onStopBot: (String) -> Unit,
     onRestartBot: (String) -> Unit,
     onConfigureBot: (String) -> Unit,
     onUninstallBot: (String) -> Unit,
+    onUpdateBot: (String, BotVersion) -> Unit = { _, _ -> },
+    onCheckForUpdates: () -> Unit = {},
+    isCheckingUpdates: Boolean = false,
     onBrowseStoreClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -95,17 +108,37 @@ fun MyBotsContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
+                    OutlinedButton(
+                        onClick = onCheckForUpdates,
+                        enabled = !isCheckingUpdates,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        if (isCheckingUpdates) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Checking...", style = MaterialTheme.typography.labelSmall)
+                        } else {
+                            Icon(Icons.Default.Sync, contentDescription = "Check for updates", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Check Updates", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
 
             items(instances, key = { it.installationId }) { instance ->
                 BotInstanceCard(
                     instance = instance,
+                    updateVersion = availableUpdates[instance.installationId],
+                    updateProgress = updateProgress[instance.installationId],
                     onStart = { onStartBot(instance.installationId) },
                     onStop = { onStopBot(instance.installationId) },
                     onRestart = { onRestartBot(instance.installationId) },
                     onConfigure = { onConfigureBot(instance.botId) },
-                    onUninstall = { onUninstallBot(instance.installationId) }
+                    onUninstall = { onUninstallBot(instance.installationId) },
+                    onUpdate = { version -> onUpdateBot(instance.installationId, version) }
                 )
             }
         }
@@ -115,11 +148,14 @@ fun MyBotsContent(
 @Composable
 fun BotInstanceCard(
     instance: BotInstance,
+    updateVersion: BotVersion? = null,
+    updateProgress: BotUpdateProgress? = null,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
     onConfigure: () -> Unit,
     onUninstall: () -> Unit,
+    onUpdate: (BotVersion) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isRunning = instance.status.isRunning
@@ -189,6 +225,21 @@ fun BotInstanceCard(
             // Real State Diagnostic Detail
             Spacer(modifier = Modifier.height(10.dp))
             StatusDiagnosticDetail(status = instance.status, startedAt = instance.startedAt)
+
+            // Version Update Banner / Active Progress Tracker
+            if (updateProgress != null && updateProgress.state != UpdateState.IDLE) {
+                Spacer(modifier = Modifier.height(10.dp))
+                UpdateProgressBanner(
+                    updateProgress = updateProgress,
+                    onRetry = { updateVersion?.let { onUpdate(it) } }
+                )
+            } else if (updateVersion != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                UpdateAvailableBanner(
+                    updateVersion = updateVersion,
+                    onUpdate = { onUpdate(updateVersion) }
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -362,3 +413,169 @@ private fun EmptyMyBotsView(onBrowseStoreClick: () -> Unit, modifier: Modifier =
         }
     }
 }
+
+@Composable
+private fun UpdateAvailableBanner(
+    updateVersion: BotVersion,
+    onUpdate: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.SystemUpdate,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Update available — v${updateVersion.version}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                val notes = updateVersion.releaseNotes
+                if (!notes.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = notes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Button(
+                onClick = onUpdate,
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Text("Update", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateProgressBanner(
+    updateProgress: BotUpdateProgress,
+    onRetry: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = when (updateProgress.state) {
+                UpdateState.SUCCESS -> Color(0xFFE8F5E9)
+                UpdateState.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+                UpdateState.ROLLING_BACK -> Color(0xFFFFF3E0)
+                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+            }
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = when (updateProgress.state) {
+                        UpdateState.CHECKING -> "🔍 Checking Compatibility"
+                        UpdateState.DOWNLOADING -> "📥 Downloading v${updateProgress.targetVersion}"
+                        UpdateState.VERIFYING -> "🛡️ Verifying SHA-256 Checksum"
+                        UpdateState.INSTALLING -> "📦 Staging & Replacing Package"
+                        UpdateState.STARTING -> "🚀 Starting v${updateProgress.targetVersion} & Health Check"
+                        UpdateState.SUCCESS -> "✅ Successfully Updated to v${updateProgress.targetVersion}"
+                        UpdateState.ROLLING_BACK -> "⚠️ Startup Failed — Rolling Back to v${updateProgress.currentVersion}"
+                        UpdateState.FAILED -> "❌ Update Failed"
+                        UpdateState.IDLE -> ""
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = when (updateProgress.state) {
+                        UpdateState.SUCCESS -> Color(0xFF2E7D32)
+                        UpdateState.FAILED -> MaterialTheme.colorScheme.error
+                        UpdateState.ROLLING_BACK -> Color(0xFFE65100)
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+
+                if (updateProgress.state == UpdateState.DOWNLOADING) {
+                    Text(
+                        text = "${(updateProgress.progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (updateProgress.isInProgress) {
+                Spacer(modifier = Modifier.height(8.dp))
+                if (updateProgress.state == UpdateState.DOWNLOADING) {
+                    LinearProgressIndicator(
+                        progress = { updateProgress.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                    )
+                }
+            }
+
+            updateProgress.message?.let { msg ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            updateProgress.error?.let { err ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = onRetry,
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text("Retry Update", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+

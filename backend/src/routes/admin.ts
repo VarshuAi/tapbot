@@ -252,11 +252,13 @@ export async function handleAdminRoutes(request: Request, env: Env, url: URL): P
         const versionId = generateId('ver');
         const now = new Date().toISOString();
         const minAppVersion = body.minimumAppVersion || 1;
+        const minRuntimeVersion = body.minimumRuntimeVersion || '1.0.0';
+        const versionStatus = body.status === 'unpublished' ? 'unpublished' : 'published';
 
-        await env.DB.batch([
+        const statements = [
             env.DB.prepare(`
-                INSERT INTO bot_versions (id, bot_id, version, package_key, package_size, sha256, release_notes, minimum_app_version, published_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO bot_versions (id, bot_id, version, package_key, package_size, sha256, release_notes, minimum_app_version, minimum_runtime_version, status, published_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).bind(
                 versionId,
                 bot.id,
@@ -266,12 +268,22 @@ export async function handleAdminRoutes(request: Request, env: Env, url: URL): P
                 body.sha256,
                 body.releaseNotes || null,
                 minAppVersion,
+                minRuntimeVersion,
+                versionStatus,
                 now
-            ),
-            env.DB.prepare(`
-                UPDATE bots SET current_version = ?, updated_at = ? WHERE id = ?
-            `).bind(body.version, now, bot.id)
-        ]);
+            )
+        ];
+
+        // Only promote to current_version if published
+        if (versionStatus === 'published') {
+            statements.push(
+                env.DB.prepare(`
+                    UPDATE bots SET current_version = ?, updated_at = ? WHERE id = ?
+                `).bind(body.version, now, bot.id)
+            );
+        }
+
+        await env.DB.batch(statements);
 
         const createdVersion = await env.DB.prepare('SELECT * FROM bot_versions WHERE id = ?').bind(versionId).first<BotVersionRow>();
 
@@ -279,6 +291,79 @@ export async function handleAdminRoutes(request: Request, env: Env, url: URL): P
             success: true,
             data: createdVersion
         }, 201);
+    }
+
+    // 6a. POST /api/v1/admin/bots/:id/versions/:version/publish - Publish a specific version
+    const publishVersionMatch = path.match(/^\/api\/v1\/admin\/bots\/([^/]+)\/versions\/([^/]+)\/publish$/);
+    if (publishVersionMatch && request.method === 'POST') {
+        const idOrSlug = decodeURIComponent(publishVersionMatch[1]);
+        const targetVersion = decodeURIComponent(publishVersionMatch[2]);
+
+        const bot = await env.DB.prepare('SELECT id FROM bots WHERE id = ? OR slug = ?').bind(idOrSlug, idOrSlug).first<BotRow>();
+        if (!bot) {
+            return jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: `Bot not found: ${idOrSlug}` } }, 404);
+        }
+
+        const versionRow = await env.DB.prepare(
+            'SELECT * FROM bot_versions WHERE bot_id = ? AND version = ?'
+        ).bind(bot.id, targetVersion).first<BotVersionRow>();
+        if (!versionRow) {
+            return jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: `Version not found: ${targetVersion}` } }, 404);
+        }
+
+        const now = new Date().toISOString();
+        await env.DB.batch([
+            env.DB.prepare("UPDATE bot_versions SET status = 'published', published_at = ? WHERE id = ?").bind(now, versionRow.id),
+            env.DB.prepare("UPDATE bots SET current_version = ?, updated_at = ? WHERE id = ?").bind(targetVersion, now, bot.id)
+        ]);
+
+        return jsonResponse({
+            success: true,
+            data: { botId: bot.id, version: targetVersion, status: 'published', publishedAt: now }
+        });
+    }
+
+    // 6b. POST /api/v1/admin/bots/:id/versions/:version/unpublish - Unpublish a version
+    const unpublishVersionMatch = path.match(/^\/api\/v1\/admin\/bots\/([^/]+)\/versions\/([^/]+)\/unpublish$/);
+    if (unpublishVersionMatch && request.method === 'POST') {
+        const idOrSlug = decodeURIComponent(unpublishVersionMatch[1]);
+        const targetVersion = decodeURIComponent(unpublishVersionMatch[2]);
+
+        const bot = await env.DB.prepare('SELECT id, current_version FROM bots WHERE id = ? OR slug = ?').bind(idOrSlug, idOrSlug).first<BotRow>();
+        if (!bot) {
+            return jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: `Bot not found: ${idOrSlug}` } }, 404);
+        }
+
+        const versionRow = await env.DB.prepare(
+            'SELECT * FROM bot_versions WHERE bot_id = ? AND version = ?'
+        ).bind(bot.id, targetVersion).first<BotVersionRow>();
+        if (!versionRow) {
+            return jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: `Version not found: ${targetVersion}` } }, 404);
+        }
+
+        const now = new Date().toISOString();
+        const statements = [
+            env.DB.prepare("UPDATE bot_versions SET status = 'unpublished' WHERE id = ?").bind(versionRow.id)
+        ];
+
+        // If unpublishing current_version, find next highest published version
+        if (bot.current_version === targetVersion) {
+            const nextBest = await env.DB.prepare(
+                "SELECT version FROM bot_versions WHERE bot_id = ? AND version != ? AND status = 'published' ORDER BY published_at DESC LIMIT 1"
+            ).bind(bot.id, targetVersion).first<{ version: string }>();
+
+            const newCurrent = nextBest ? nextBest.version : null;
+            statements.push(
+                env.DB.prepare("UPDATE bots SET current_version = ?, updated_at = ? WHERE id = ?").bind(newCurrent, now, bot.id)
+            );
+        }
+
+        await env.DB.batch(statements);
+
+        return jsonResponse({
+            success: true,
+            data: { botId: bot.id, version: targetVersion, status: 'unpublished' }
+        });
     }
 
     // 7. POST /api/v1/admin/bots/:id/credentials - Add/update bot credential spec

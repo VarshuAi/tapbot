@@ -97,6 +97,10 @@ class BotCredentialSecurityTest {
             capturedCalls.add("getBotDetails:$botId")
             return Result.success(secureBot)
         }
+
+        override suspend fun getBotVersions(botId: String): Result<List<com.tapbot.core.model.BotVersion>> = Result.success(emptyList())
+        override suspend fun getLatestVersion(botId: String): Result<com.tapbot.core.model.BotVersion?> = Result.success(null)
+        override suspend fun checkForUpdate(botId: String, currentVersion: String): Result<com.tapbot.core.model.BotVersion?> = Result.success(null)
     }
 
     private val inMemoryCredentialStore = object : SecureCredentialStore {

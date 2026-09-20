@@ -3,6 +3,7 @@ package com.tapbot.core.network
 import com.tapbot.core.model.BotCredentialSpec
 import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.model.BotPackageInfo
+import com.tapbot.core.model.BotVersion
 
 /**
  * Interface to fetch catalog metadata published by the developer.
@@ -11,6 +12,8 @@ import com.tapbot.core.model.BotPackageInfo
 interface CatalogApi {
     suspend fun getBots(): Result<List<BotMetadata>>
     suspend fun getBotDetails(botId: String): Result<BotMetadata>
+    suspend fun getBotVersions(botId: String): Result<List<BotVersion>>
+    suspend fun getLatestVersion(botId: String): Result<BotVersion?>
 }
 
 /**
@@ -177,6 +180,80 @@ class MockCatalogApi : CatalogApi {
         )
     )
 
+    private val sampleVersions = mapOf(
+        "bot_music" to listOf(
+            BotVersion(
+                id = "ver_music_140",
+                botId = "bot_music",
+                version = "1.4.0",
+                packageUrl = "https://assets.tapbot.internal/packages/bot_music_1.4.0.botpkg",
+                sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                packageSize = 245760L,
+                releaseNotes = "• Added high-resolution audio streaming\n• Queue persistence across reboots\n• Enhanced volume normalization",
+                minimumAppVersion = 1,
+                minimumRuntimeVersion = "1.0.0",
+                isPublished = true,
+                publishedAt = "2026-09-20T10:00:00Z"
+            ),
+            BotVersion(
+                id = "ver_music_100",
+                botId = "bot_music",
+                version = "1.0.0",
+                packageUrl = "https://assets.tapbot.internal/packages/bot_music_1.0.0.botpkg",
+                sha256 = "feedbeef100",
+                packageSize = 204800L,
+                releaseNotes = "Initial release of Music Bot for Android",
+                minimumAppVersion = 1,
+                minimumRuntimeVersion = "1.0.0",
+                isPublished = true,
+                publishedAt = "2026-09-01T10:00:00Z"
+            )
+        ),
+        "bot_ai" to listOf(
+            BotVersion(
+                id = "ver_ai_120",
+                botId = "bot_ai",
+                version = "1.2.0",
+                packageUrl = "https://assets.tapbot.internal/packages/bot_ai_1.2.0.botpkg",
+                sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                packageSize = 312000L,
+                releaseNotes = "• Faster token generation\n• Markdown code formatting improvements",
+                minimumAppVersion = 1,
+                minimumRuntimeVersion = "1.0.0",
+                isPublished = true,
+                publishedAt = "2026-09-18T12:00:00Z"
+            ),
+            BotVersion(
+                id = "ver_ai_100",
+                botId = "bot_ai",
+                version = "1.0.0",
+                packageUrl = "https://assets.tapbot.internal/packages/bot_ai_1.0.0.botpkg",
+                sha256 = "feedbeefai100",
+                packageSize = 280000L,
+                releaseNotes = "Initial release of AI Assistant Bot",
+                minimumAppVersion = 1,
+                minimumRuntimeVersion = "1.0.0",
+                isPublished = true,
+                publishedAt = "2026-09-01T10:00:00Z"
+            )
+        ),
+        "bot_utility" to listOf(
+            BotVersion(
+                id = "ver_util_110",
+                botId = "bot_utility",
+                version = "1.1.0",
+                packageUrl = "https://assets.tapbot.internal/packages/bot_utility_1.1.0.botpkg",
+                sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                packageSize = 180000L,
+                releaseNotes = "• Battery thermal reporting\n• Thread pool introspection",
+                minimumAppVersion = 1,
+                minimumRuntimeVersion = "1.0.0",
+                isPublished = true,
+                publishedAt = "2026-09-15T15:00:00Z"
+            )
+        )
+    )
+
     override suspend fun getBots(): Result<List<BotMetadata>> {
         return Result.success(sampleBots)
     }
@@ -188,5 +265,15 @@ class MockCatalogApi : CatalogApi {
         } else {
             Result.failure(NoSuchElementException("Bot not found: $botId"))
         }
+    }
+
+    override suspend fun getBotVersions(botId: String): Result<List<BotVersion>> {
+        val list = sampleVersions[botId] ?: emptyList()
+        return Result.success(list.filter { it.isPublished })
+    }
+
+    override suspend fun getLatestVersion(botId: String): Result<BotVersion?> {
+        val list = sampleVersions[botId]?.filter { it.isPublished }
+        return Result.success(list?.firstOrNull())
     }
 }

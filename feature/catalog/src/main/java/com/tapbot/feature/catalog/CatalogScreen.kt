@@ -171,11 +171,16 @@ fun CatalogScreen(
                     } else {
                         MyBotsContent(
                             instances = state.installedInstances,
+                            availableUpdates = state.availableUpdates,
+                            updateProgress = state.updateProgress,
                             onStartBot = viewModel::startBot,
                             onStopBot = viewModel::stopBot,
                             onRestartBot = viewModel::restartBot,
                             onConfigureBot = onBotClick,
                             onUninstallBot = viewModel::uninstallBot,
+                            onUpdateBot = viewModel::updateBot,
+                            onCheckForUpdates = viewModel::checkForUpdates,
+                            isCheckingUpdates = state.isCheckingUpdates,
                             onBrowseStoreClick = { viewModel.selectTab(0) }
                         )
                     }

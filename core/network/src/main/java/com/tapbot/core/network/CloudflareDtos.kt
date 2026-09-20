@@ -3,6 +3,7 @@ package com.tapbot.core.network
 import com.tapbot.core.model.BotCredentialSpec
 import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.model.BotPackageInfo
+import com.tapbot.core.model.BotVersion
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -108,4 +109,20 @@ internal data class CloudflareVersionDto(
     val minimumAppVersion: Int = 1,
     val publishedAt: String,
     val downloadUrl: String? = null
-)
+) {
+    fun toDomainModel(botId: String): BotVersion {
+        return BotVersion(
+            id = id,
+            botId = botId,
+            version = version,
+            packageUrl = downloadUrl ?: "",
+            sha256 = sha256,
+            packageSize = packageSize,
+            releaseNotes = releaseNotes,
+            minimumAppVersion = minimumAppVersion,
+            minimumRuntimeVersion = "1.0.0",
+            isPublished = true,
+            publishedAt = publishedAt
+        )
+    }
+}

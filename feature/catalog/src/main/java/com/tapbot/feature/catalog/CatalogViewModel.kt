@@ -3,9 +3,14 @@ package com.tapbot.feature.catalog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.tapbot.core.model.BotInstance
 import com.tapbot.core.model.BotMetadata
+import com.tapbot.core.model.BotUpdateProgress
+import com.tapbot.core.model.BotVersion
+import com.tapbot.core.network.BotPackageDownloader
 import com.tapbot.core.network.CatalogApi
 import com.tapbot.core.network.CatalogRepository
+import com.tapbot.core.network.ManifestValidator
 import com.tapbot.core.network.OfflineFirstCatalogRepository
 import com.tapbot.core.runner.manager.BotInstanceManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +21,9 @@ import kotlinx.coroutines.launch
 
 class CatalogViewModel(
     private val catalogRepository: CatalogRepository,
-    private val botInstanceManager: BotInstanceManager? = null
+    private val botInstanceManager: BotInstanceManager? = null,
+    private val packageDownloader: BotPackageDownloader? = null,
+    private val manifestValidator: ManifestValidator? = null
 ) : ViewModel() {
 
     // Secondary constructor accepting CatalogApi for backward compatibility
@@ -26,9 +33,13 @@ class CatalogViewModel(
                 override suspend fun getPublishedBots(category: String?, search: String?) = catalogApi.getBots()
                 override suspend fun getBotDetails(botId: String) = catalogApi.getBotDetails(botId)
                 override suspend fun getCategories() = Result.success(listOf("All", "Utilities", "Media", "Productivity"))
+                override suspend fun getBotVersions(botId: String) = catalogApi.getBotVersions(botId)
+                override suspend fun getLatestVersion(botId: String) = catalogApi.getLatestVersion(botId)
             }
         ),
-        botInstanceManager = null
+        botInstanceManager = null,
+        packageDownloader = null,
+        manifestValidator = null
     )
 
     private val _uiState = MutableStateFlow<CatalogUiState>(CatalogUiState.Loading)
@@ -41,6 +52,7 @@ class CatalogViewModel(
     init {
         loadCatalog(forceRefresh = false)
         observeInstalledBots()
+        observeUpdateProgress()
     }
 
     private fun observeInstalledBots() {
@@ -50,6 +62,20 @@ class CatalogViewModel(
                 _uiState.update { current ->
                     if (current is CatalogUiState.Success) {
                         current.copy(installedInstances = list)
+                    } else current
+                }
+                checkForUpdates()
+            }
+        }
+    }
+
+    private fun observeUpdateProgress() {
+        val manager = botInstanceManager ?: return
+        viewModelScope.launch {
+            manager.updateProgress.collect { progressMap ->
+                _uiState.update { current ->
+                    if (current is CatalogUiState.Success) {
+                        current.copy(updateProgress = progressMap)
                     } else current
                 }
             }
@@ -77,6 +103,8 @@ class CatalogViewModel(
                     val filtered = filterBots(selectedCat, query)
 
                     val installed = botInstanceManager?.instances?.value ?: emptyList()
+                    val existingUpdates = (current as? CatalogUiState.Success)?.availableUpdates ?: emptyMap()
+                    val activeProgress = botInstanceManager?.updateProgress?.value ?: emptyMap()
 
                     _uiState.value = CatalogUiState.Success(
                         bots = filtered,
@@ -87,8 +115,11 @@ class CatalogViewModel(
                         isRefreshing = false,
                         isOffline = false,
                         selectedTab = selectedTab,
-                        installedInstances = installed
+                        installedInstances = installed,
+                        availableUpdates = existingUpdates,
+                        updateProgress = activeProgress
                     )
+                    checkForUpdates()
                 }
                 .onFailure { error ->
                     if (current is CatalogUiState.Success) {
@@ -99,6 +130,51 @@ class CatalogViewModel(
                         )
                     }
                 }
+        }
+    }
+
+    fun checkForUpdates() {
+        val manager = botInstanceManager ?: return
+        val current = _uiState.value as? CatalogUiState.Success ?: return
+        val instances = current.installedInstances.ifEmpty { manager.instances.value }
+        if (instances.isEmpty()) return
+
+        viewModelScope.launch {
+            _uiState.update { state ->
+                if (state is CatalogUiState.Success) state.copy(isCheckingUpdates = true) else state
+            }
+
+            val updates = mutableMapOf<String, BotVersion>()
+            for (instance in instances) {
+                catalogRepository.checkForUpdate(instance.botId, instance.version)
+                    .onSuccess { updateVersion ->
+                        if (updateVersion != null) {
+                            updates[instance.installationId] = updateVersion
+                        }
+                    }
+            }
+
+            _uiState.update { state ->
+                if (state is CatalogUiState.Success) {
+                    state.copy(
+                        availableUpdates = updates,
+                        isCheckingUpdates = false
+                    )
+                } else state
+            }
+        }
+    }
+
+    fun updateBot(installationId: String, targetVersion: BotVersion) {
+        val manager = botInstanceManager ?: return
+        viewModelScope.launch {
+            manager.updateWithRollback(
+                installationId = installationId,
+                targetVersion = targetVersion,
+                packageDownloader = packageDownloader,
+                manifestValidator = manifestValidator
+            )
+            checkForUpdates()
         }
     }
 
@@ -169,12 +245,19 @@ class CatalogViewModel(
     companion object {
         fun provideFactory(
             catalogRepository: CatalogRepository,
-            botInstanceManager: BotInstanceManager? = null
+            botInstanceManager: BotInstanceManager? = null,
+            packageDownloader: BotPackageDownloader? = null,
+            manifestValidator: ManifestValidator? = null
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return CatalogViewModel(catalogRepository, botInstanceManager) as T
+                    return CatalogViewModel(
+                        catalogRepository = catalogRepository,
+                        botInstanceManager = botInstanceManager,
+                        packageDownloader = packageDownloader,
+                        manifestValidator = manifestValidator
+                    ) as T
                 }
             }
 

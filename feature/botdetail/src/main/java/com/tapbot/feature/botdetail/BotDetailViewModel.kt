@@ -46,6 +46,8 @@ class BotDetailViewModel(
                 override suspend fun getPublishedBots(category: String?, search: String?) = catalogApi.getBots()
                 override suspend fun getBotDetails(botId: String) = catalogApi.getBotDetails(botId)
                 override suspend fun getCategories() = Result.success(listOf("All", "Utilities", "Media", "Productivity"))
+                override suspend fun getBotVersions(botId: String) = catalogApi.getBotVersions(botId)
+                override suspend fun getLatestVersion(botId: String) = catalogApi.getLatestVersion(botId)
             }
         ),
         credentialStore = credentialStore,

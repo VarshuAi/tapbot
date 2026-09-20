@@ -3,6 +3,7 @@ package com.tapbot.core.network
 import com.tapbot.core.model.BotCredentialSpec
 import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.model.BotPackageInfo
+import com.tapbot.core.model.BotVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -18,6 +19,8 @@ interface RemoteBotDataSource {
     suspend fun getPublishedBots(category: String? = null, search: String? = null): Result<List<BotMetadata>>
     suspend fun getBotDetails(botId: String): Result<BotMetadata>
     suspend fun getCategories(): Result<List<String>>
+    suspend fun getBotVersions(botId: String): Result<List<BotVersion>>
+    suspend fun getLatestVersion(botId: String): Result<BotVersion?>
 }
 
 /**
@@ -118,6 +121,56 @@ class CloudflareRemoteBotDataSource(
                     val list = mutableListOf("All")
                     list.addAll(wrapper.data.map { it.name })
                     list
+                }
+            }
+        }
+
+    override suspend fun getBotVersions(botId: String): Result<List<BotVersion>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val url = "${baseUrl.trimEnd('/')}/api/v1/bots/$botId/versions"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+                    .get()
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}: ${response.message}")
+                    }
+                    val bodyString = response.body?.string() ?: throw IOException("Empty response body")
+                    val wrapper = json.decodeFromString<ApiEnvelope<List<CloudflareVersionDto>>>(bodyString)
+                    if (!wrapper.success || wrapper.data == null) {
+                        throw IOException(wrapper.error?.message ?: "Failed to fetch versions for $botId")
+                    }
+                    wrapper.data.map { it.toDomainModel(botId) }
+                }
+            }
+        }
+
+    override suspend fun getLatestVersion(botId: String): Result<BotVersion?> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val url = "${baseUrl.trimEnd('/')}/api/v1/bots/$botId/versions/latest"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+                    .get()
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.code == 404) return@runCatching null
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}: ${response.message}")
+                    }
+                    val bodyString = response.body?.string() ?: throw IOException("Empty response body")
+                    val wrapper = json.decodeFromString<ApiEnvelope<CloudflareVersionDto>>(bodyString)
+                    if (!wrapper.success || wrapper.data == null) {
+                        null
+                    } else {
+                        wrapper.data.toDomainModel(botId)
+                    }
                 }
             }
         }

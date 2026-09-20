@@ -43,6 +43,8 @@ export interface BotVersionRow {
     sha256: string;
     release_notes: string | null;
     minimum_app_version: number;
+    minimum_runtime_version: string;
+    status: 'published' | 'unpublished';
     published_at: string;
 }
 
@@ -88,6 +90,8 @@ export interface BotVersionDto {
     sha256: string;
     releaseNotes: string | null;
     minimumAppVersion: number;
+    minimumRuntimeVersion: string;
+    status: 'published' | 'unpublished';
     publishedAt: string;
     downloadUrl?: string;
 }
@@ -144,6 +148,8 @@ export interface CreateVersionRequest {
     sha256: string;
     releaseNotes?: string;
     minimumAppVersion?: number;
+    minimumRuntimeVersion?: string;
+    status?: 'published' | 'unpublished';
 }
 
 export interface CreateCredentialRequest {

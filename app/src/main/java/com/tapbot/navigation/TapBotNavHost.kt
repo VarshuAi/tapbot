@@ -29,7 +29,8 @@ fun TapBotNavHost(
             val catalogViewModel: CatalogViewModel = viewModel(
                 factory = CatalogViewModel.provideFactory(
                     catalogRepository = app.catalogRepository,
-                    botInstanceManager = app.botInstanceManager
+                    botInstanceManager = app.botInstanceManager,
+                    packageDownloader = app.botPackageDownloader
                 )
             )
             CatalogScreen(

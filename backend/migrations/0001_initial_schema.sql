@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS bot_versions (
     sha256 TEXT NOT NULL,
     release_notes TEXT,
     minimum_app_version INTEGER NOT NULL DEFAULT 1,
+    minimum_runtime_version TEXT NOT NULL DEFAULT '1.0.0',
+    status TEXT NOT NULL DEFAULT 'published', -- 'published', 'unpublished'
     published_at TEXT NOT NULL
 );
 

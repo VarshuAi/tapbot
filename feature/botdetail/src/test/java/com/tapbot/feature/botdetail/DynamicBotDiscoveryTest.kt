@@ -86,6 +86,8 @@ class DynamicBotDiscoveryTest {
             return if (botId == musicBotMetadata.id) Result.success(musicBotMetadata)
             else Result.failure(NoSuchElementException("Bot not found: $botId"))
         }
+        override suspend fun getBotVersions(botId: String): Result<List<com.tapbot.core.model.BotVersion>> = Result.success(emptyList())
+        override suspend fun getLatestVersion(botId: String): Result<com.tapbot.core.model.BotVersion?> = Result.success(null)
     }
 
     private val fakeCredentialStore = object : SecureCredentialStore {

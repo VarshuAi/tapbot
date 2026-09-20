@@ -1,6 +1,7 @@
 package com.tapbot.core.network
 
 import com.tapbot.core.model.BotMetadata
+import com.tapbot.core.model.BotVersion
 
 /**
  * High-level repository for accessing catalog bots, categories, and details
@@ -11,6 +12,9 @@ interface CatalogRepository {
     suspend fun getFeaturedBots(): Result<List<BotMetadata>>
     suspend fun getCategories(): Result<List<String>>
     suspend fun getBotDetails(botId: String, forceRefresh: Boolean = false): Result<BotMetadata>
+    suspend fun getBotVersions(botId: String): Result<List<BotVersion>>
+    suspend fun getLatestVersion(botId: String): Result<BotVersion?>
+    suspend fun checkForUpdate(botId: String, currentVersion: String): Result<BotVersion?>
 }
 
 /**
@@ -84,6 +88,29 @@ class OfflineFirstCatalogRepository(
         return remoteSource.getBotDetails(botId).recoverCatching { error ->
             val fallback = cache.getCachedBot(botId)
             fallback ?: throw error
+        }
+    }
+
+    override suspend fun getBotVersions(botId: String): Result<List<BotVersion>> {
+        return remoteSource.getBotVersions(botId)
+    }
+
+    override suspend fun getLatestVersion(botId: String): Result<BotVersion?> {
+        return remoteSource.getLatestVersion(botId)
+    }
+
+    override suspend fun checkForUpdate(botId: String, currentVersion: String): Result<BotVersion?> {
+        return runCatching {
+            val latest = getLatestVersion(botId).getOrThrow() ?: return@runCatching null
+            // Check if latest.version is newer than currentVersion
+            val isCurrentNewerOrSame = DowngradeAttackChecker.isDowngrade(currentInstalledVersion = latest.version, candidateVersion = currentVersion)
+            val isDowngrade = DowngradeAttackChecker.isDowngrade(currentInstalledVersion = currentVersion, candidateVersion = latest.version)
+
+            if (!isDowngrade && latest.version != currentVersion) {
+                latest
+            } else {
+                null
+            }
         }
     }
 }
