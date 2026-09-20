@@ -203,7 +203,11 @@ class MultiBotBenchmarkTest {
         val cpuStartNs = getThreadCpuTime()
 
         // Allow bots to execute several long-polling cycles and process incoming test messages
-        delay(200)
+        var elapsed = 0
+        while (fakeApi.sentMessages.size < 3 && elapsed < 1000) {
+            delay(50)
+            elapsed += 50
+        }
 
         val cpuEndNs = getThreadCpuTime()
         val cpuTimeMs = (cpuEndNs - cpuStartNs) / 1_000_000.0

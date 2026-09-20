@@ -13,7 +13,9 @@ data class RuntimeContext(
     val token: String,
     val telegramApi: TelegramApiClient,
     val log: (level: LogLevel, tag: String, message: String) -> Unit,
-    val scope: CoroutineScope
+    val scope: CoroutineScope,
+    val isNetworkAvailable: () -> Boolean = { true },
+    val networkState: StateFlow<Boolean>? = null
 )
 
 /**

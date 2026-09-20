@@ -20,11 +20,7 @@ import java.util.concurrent.TimeUnit
  * Executes on the user's Android device.
  */
 open class TelegramApiClient(
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = sharedClient
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -107,5 +103,15 @@ open class TelegramApiClient(
 
     companion object {
         private const val BASE_URL = "https://api.telegram.org"
+
+        val sharedClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+        }
     }
 }

@@ -601,9 +601,22 @@ class DefaultBotInstanceManager(
         saveToDisk()
     }
 
+    internal var diskWriteCount: Long = 0L
+        private set
+
+    fun getDiskWriteCount(): Long = diskWriteCount
+
     private fun updateStatusInternal(installationId: String, status: BotInstanceStatus) {
+        var isStructuralChange = false
         _instances.value = _instances.value.map {
             if (it.installationId == installationId) {
+                val previousStatus = it.status
+                // Only write to flash disk on structural lifecycle transitions, never on live telemetry ticks
+                isStructuralChange = when {
+                    previousStatus::class != status::class -> true
+                    status !is BotInstanceStatus.Running -> true
+                    else -> false
+                }
                 val startedAt = if (status.isRunning && it.startedAt == null) {
                     System.currentTimeMillis()
                 } else if (status.isStopped) {
@@ -614,7 +627,9 @@ class DefaultBotInstanceManager(
                 it.copy(status = status, startedAt = startedAt)
             } else it
         }
-        saveToDisk()
+        if (isStructuralChange) {
+            saveToDisk()
+        }
     }
 
     private fun launchService(action: String, installationId: String?) {
@@ -652,6 +667,7 @@ class DefaultBotInstanceManager(
     private fun saveToDisk() {
         val file = storageFile ?: return
         try {
+            diskWriteCount++
             val text = json.encodeToString(ListSerializer(BotInstance.serializer()), _instances.value)
             file.writeText(text)
         } catch (_: Exception) {}

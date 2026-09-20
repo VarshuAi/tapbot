@@ -55,6 +55,12 @@ class BotForegroundService : Service() {
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    private val _networkState = MutableStateFlow(true)
+    val networkState: StateFlow<Boolean> = _networkState.asStateFlow()
+
+    private var lastNotifiedNames: Set<String>? = null
+    private var messageWakeLock: PowerManager.WakeLock? = null
+
     private val lifecycleMutex = Mutex()
 
     // Map of active running instances: installationId -> ActiveExecution
@@ -193,7 +199,8 @@ class BotForegroundService : Service() {
                             )
                         )
                         _runtimeState.value = st
-                        updateNotification()
+                        // Note: updateNotification is omitted here to prevent expensive IPC binder churn on every poll tick.
+                        // Notifications are only refreshed on lifecycle transitions (add, remove, crash).
                     }
                     is BotRuntimeState.Error -> {
                         logRepo?.appendLog(botId, LogLevel.ERROR, TAG, "Runtime error: ${st.message}")
@@ -224,10 +231,14 @@ class BotForegroundService : Service() {
             log = { level, tag, msg ->
                 if (level == LogLevel.INFO && msg.contains("Received message")) {
                     acquireMessageWakeLock()
+                } else if (level == LogLevel.INFO && (msg.contains("reply sent") || msg.contains("Replied"))) {
+                    releaseMessageWakeLock()
                 }
                 logRepo?.appendLog(botId, level, tag, msg)
             },
-            scope = serviceScope
+            scope = serviceScope,
+            isNetworkAvailable = { _networkState.value },
+            networkState = _networkState.asStateFlow()
         )
 
         try {
@@ -290,15 +301,22 @@ class BotForegroundService : Service() {
 
     /**
      * Updates foreground notification to reflect all concurrently running bots.
+     * Throttled to only trigger when the set of active bot names or count actually changes.
      */
-    private fun updateNotification() {
+    private fun updateNotification(force: Boolean = false) {
         val count = activeExecutions.size
         if (count == 0) {
+            lastNotifiedNames = null
             return
         }
 
-        val names = activeExecutions.values.map { it.botName }
-        val notification = notificationHelper.buildForegroundNotification(count, names)
+        val currentNames = activeExecutions.values.map { it.botName }.toSet()
+        if (!force && currentNames == lastNotifiedNames) {
+            return // No change in active running bots; avoid expensive IPC binder call
+        }
+        lastNotifiedNames = currentNames
+
+        val notification = notificationHelper.buildForegroundNotification(count, currentNames.toList())
         startForeground(NotificationHelper.NOTIFICATION_ID, notification)
     }
 
@@ -314,15 +332,29 @@ class BotForegroundService : Service() {
         }
     }
 
-    private fun acquireMessageWakeLock() {
-        try {
-            powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapBot:MessageReplyWakeLock")?.apply {
+    private fun getOrCreateWakeLock(): PowerManager.WakeLock? {
+        if (messageWakeLock == null) {
+            messageWakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapBot:MessageReplyWakeLock")?.apply {
                 setReferenceCounted(false)
-                acquire(15000L /* 15 seconds max */)
             }
-        } catch (e: Exception) {
-            ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "WakeLock notice: ${e.message}")
         }
+        return messageWakeLock
+    }
+
+    private fun acquireMessageWakeLock(timeoutMs: Long = 2000L) {
+        try {
+            getOrCreateWakeLock()?.acquire(timeoutMs /* 2s max safety timeout */)
+        } catch (e: Exception) {
+            ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "WakeLock acquire: ${e.message}")
+        }
+    }
+
+    private fun releaseMessageWakeLock() {
+        try {
+            if (messageWakeLock?.isHeld == true) {
+                messageWakeLock?.release()
+            }
+        } catch (_: Exception) {}
     }
 
     private fun registerNetworkCallback() {
@@ -332,9 +364,11 @@ class BotForegroundService : Service() {
             .build()
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                _networkState.value = true
                 ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.INFO, TAG, "Network connection active.")
             }
             override fun onLost(network: Network) {
+                _networkState.value = false
                 ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "Network connection lost. Polling suspended.")
             }
         }
@@ -344,6 +378,7 @@ class BotForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseMessageWakeLock()
         serviceJob.cancel()
         networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
     }

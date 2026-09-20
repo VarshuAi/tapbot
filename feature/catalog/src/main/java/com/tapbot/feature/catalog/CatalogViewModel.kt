@@ -58,13 +58,19 @@ class CatalogViewModel(
     private fun observeInstalledBots() {
         val manager = botInstanceManager ?: return
         viewModelScope.launch {
+            var lastKnownInstances: List<Pair<String, String>>? = null
             manager.instances.collect { list ->
                 _uiState.update { current ->
                     if (current is CatalogUiState.Success) {
                         current.copy(installedInstances = list)
                     } else current
                 }
-                checkForUpdates()
+                // Only query the remote backend for updates if the installed set of bots or versions has actually changed
+                val currentInstances = list.map { it.botId to it.version }
+                if (currentInstances != lastKnownInstances) {
+                    lastKnownInstances = currentInstances
+                    checkForUpdates()
+                }
             }
         }
     }

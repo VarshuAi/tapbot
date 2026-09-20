@@ -1,6 +1,7 @@
 package com.tapbot.core.runner.runtime
 
 import com.tapbot.core.model.LogLevel
+import com.tapbot.core.runner.util.AdaptiveBackoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -73,9 +74,16 @@ class PingPongBotRuntime(
                 messageCount = 0L
             )
             ctx.log(LogLevel.INFO, TAG, "Entering getUpdates long-polling loop (timeout: 25s)...")
+            val backoff = AdaptiveBackoff()
 
             while (isActive) {
                 try {
+                    // Connectivity check: If offline, suspend until network is restored
+                    if (!ctx.isNetworkAvailable()) {
+                        backoff.delayWithBackoff(ctx.networkState)
+                        continue
+                    }
+
                     val offset = lastUpdateId?.plus(1)
                     val updatesResult = ctx.telegramApi.getUpdates(
                         token = token,
@@ -86,6 +94,7 @@ class PingPongBotRuntime(
                     pollCounter++
 
                     if (updatesResult.isSuccess) {
+                        backoff.recordSuccess()
                         val updates = updatesResult.getOrThrow()
                         for (update in updates) {
                             lastUpdateId = update.updateId
@@ -125,15 +134,17 @@ class PingPongBotRuntime(
                         }
                     } else {
                         val error = updatesResult.exceptionOrNull()
-                        ctx.log(LogLevel.WARN, TAG, "getUpdates returned error: ${error?.message}. Retrying in 3s...")
-                        delay(3000)
+                        val delayMs = backoff.recordFailure()
+                        ctx.log(LogLevel.WARN, TAG, "getUpdates returned error: ${error?.message}. Backing off for ${delayMs}ms.")
+                        backoff.delayWithBackoff(ctx.networkState)
                     }
                 } catch (e: CancellationException) {
                     break
                 } catch (e: Exception) {
                     if (isActive) {
-                        ctx.log(LogLevel.ERROR, TAG, "Exception in polling loop: ${e.message}")
-                        delay(3000)
+                        val delayMs = backoff.recordFailure()
+                        ctx.log(LogLevel.ERROR, TAG, "Exception in polling loop: ${e.message}. Backing off for ${delayMs}ms.")
+                        backoff.delayWithBackoff(ctx.networkState)
                     }
                 }
             }

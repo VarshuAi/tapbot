@@ -1,6 +1,7 @@
 package com.tapbot.core.runner.runtime
 
 import com.tapbot.core.model.LogLevel
+import com.tapbot.core.runner.util.AdaptiveBackoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -72,9 +73,16 @@ class UtilityBotRuntime(
                 messageCount = 0L
             )
             ctx.log(LogLevel.INFO, TAG, "Utility Bot polling active.")
+            val backoff = AdaptiveBackoff()
 
             while (isActive) {
                 try {
+                    // Connectivity check: If offline, suspend until network is restored
+                    if (!ctx.isNetworkAvailable()) {
+                        backoff.delayWithBackoff(ctx.networkState)
+                        continue
+                    }
+
                     val offset = lastUpdateId?.plus(1)
                     val updatesResult = ctx.telegramApi.getUpdates(
                         token = token,
@@ -85,6 +93,7 @@ class UtilityBotRuntime(
                     pollCounter++
 
                     if (updatesResult.isSuccess) {
+                        backoff.recordSuccess()
                         val updates = updatesResult.getOrThrow()
                         for (update in updates) {
                             lastUpdateId = update.updateId
@@ -102,15 +111,20 @@ class UtilityBotRuntime(
                             ctx.telegramApi.sendMessage(token, chatId, reply)
                             ctx.log(LogLevel.INFO, TAG, "Handled utility command '$text' -> reply sent.")
                         }
-                    }
 
-                    _state.value = BotRuntimeState.Running(
-                        botUsername = username,
-                        startedAt = startedAt,
-                        pollCount = pollCounter,
-                        messageCount = messageCounter,
-                        lastActivityAt = System.currentTimeMillis()
-                    )
+                        _state.value = BotRuntimeState.Running(
+                            botUsername = username,
+                            startedAt = startedAt,
+                            pollCount = pollCounter,
+                            messageCount = messageCounter,
+                            lastActivityAt = System.currentTimeMillis()
+                        )
+                    } else {
+                        val error = updatesResult.exceptionOrNull()
+                        val delayMs = backoff.recordFailure()
+                        ctx.log(LogLevel.WARN, TAG, "Utility Bot getUpdates API failure: ${error?.message}. Backing off for ${delayMs}ms.")
+                        backoff.delayWithBackoff(ctx.networkState)
+                    }
                 } catch (c: CancellationException) {
                     break
                 } catch (e: RuntimeException) {
@@ -118,11 +132,13 @@ class UtilityBotRuntime(
                         _state.value = BotRuntimeState.Error(e.message ?: "Crash")
                         throw e
                     }
-                    ctx.log(LogLevel.WARN, TAG, "Utility Bot transient error: ${e.message}")
-                    delay(3000)
+                    val delayMs = backoff.recordFailure()
+                    ctx.log(LogLevel.WARN, TAG, "Utility Bot transient error: ${e.message}. Backing off for ${delayMs}ms.")
+                    backoff.delayWithBackoff(ctx.networkState)
                 } catch (e: Exception) {
-                    ctx.log(LogLevel.WARN, TAG, "Utility Bot polling transient error: ${e.message}")
-                    delay(3000)
+                    val delayMs = backoff.recordFailure()
+                    ctx.log(LogLevel.WARN, TAG, "Utility Bot polling transient error: ${e.message}. Backing off for ${delayMs}ms.")
+                    backoff.delayWithBackoff(ctx.networkState)
                 }
             }
         }
