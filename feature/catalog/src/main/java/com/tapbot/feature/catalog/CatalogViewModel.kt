@@ -7,6 +7,7 @@ import com.tapbot.core.model.BotMetadata
 import com.tapbot.core.network.CatalogApi
 import com.tapbot.core.network.CatalogRepository
 import com.tapbot.core.network.OfflineFirstCatalogRepository
+import com.tapbot.core.runner.manager.BotInstanceManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,18 +15,20 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class CatalogViewModel(
-    private val catalogRepository: CatalogRepository
+    private val catalogRepository: CatalogRepository,
+    private val botInstanceManager: BotInstanceManager? = null
 ) : ViewModel() {
 
     // Secondary constructor accepting CatalogApi for backward compatibility
     constructor(catalogApi: CatalogApi) : this(
-        OfflineFirstCatalogRepository(
+        catalogRepository = OfflineFirstCatalogRepository(
             remoteSource = object : com.tapbot.core.network.RemoteBotDataSource {
                 override suspend fun getPublishedBots(category: String?, search: String?) = catalogApi.getBots()
                 override suspend fun getBotDetails(botId: String) = catalogApi.getBotDetails(botId)
                 override suspend fun getCategories() = Result.success(listOf("All", "Utilities", "Media", "Productivity"))
             }
-        )
+        ),
+        botInstanceManager = null
     )
 
     private val _uiState = MutableStateFlow<CatalogUiState>(CatalogUiState.Loading)
@@ -37,6 +40,20 @@ class CatalogViewModel(
 
     init {
         loadCatalog(forceRefresh = false)
+        observeInstalledBots()
+    }
+
+    private fun observeInstalledBots() {
+        val manager = botInstanceManager ?: return
+        viewModelScope.launch {
+            manager.instances.collect { list ->
+                _uiState.update { current ->
+                    if (current is CatalogUiState.Success) {
+                        current.copy(installedInstances = list)
+                    } else current
+                }
+            }
+        }
     }
 
     fun loadCatalog(forceRefresh: Boolean = false) {
@@ -56,7 +73,10 @@ class CatalogViewModel(
 
                     val selectedCat = (current as? CatalogUiState.Success)?.selectedCategory ?: "All"
                     val query = (current as? CatalogUiState.Success)?.searchQuery ?: ""
+                    val selectedTab = (current as? CatalogUiState.Success)?.selectedTab ?: 0
                     val filtered = filterBots(selectedCat, query)
+
+                    val installed = botInstanceManager?.instances?.value ?: emptyList()
 
                     _uiState.value = CatalogUiState.Success(
                         bots = filtered,
@@ -64,16 +84,53 @@ class CatalogViewModel(
                         categories = allCategories,
                         selectedCategory = selectedCat,
                         searchQuery = query,
-                        isRefreshing = false
+                        isRefreshing = false,
+                        isOffline = false,
+                        selectedTab = selectedTab,
+                        installedInstances = installed
                     )
                 }
-                .onFailure { err ->
+                .onFailure { error ->
                     if (current is CatalogUiState.Success) {
-                        _uiState.value = current.copy(isRefreshing = false)
+                        _uiState.value = current.copy(isRefreshing = false, isOffline = true)
                     } else {
-                        _uiState.value = CatalogUiState.Error(err.message ?: "Failed to load catalog")
+                        _uiState.value = CatalogUiState.Error(
+                            error.message ?: "Failed to load catalog. Please check your network connection."
+                        )
                     }
                 }
+        }
+    }
+
+    fun selectTab(tabIndex: Int) {
+        _uiState.update { current ->
+            if (current is CatalogUiState.Success) {
+                current.copy(selectedTab = tabIndex)
+            } else current
+        }
+    }
+
+    fun startBot(installationId: String) {
+        viewModelScope.launch {
+            botInstanceManager?.start(installationId)
+        }
+    }
+
+    fun stopBot(installationId: String) {
+        viewModelScope.launch {
+            botInstanceManager?.stop(installationId)
+        }
+    }
+
+    fun restartBot(installationId: String) {
+        viewModelScope.launch {
+            botInstanceManager?.restart(installationId)
+        }
+    }
+
+    fun uninstallBot(installationId: String) {
+        viewModelScope.launch {
+            botInstanceManager?.uninstall(installationId)
         }
     }
 
@@ -110,11 +167,14 @@ class CatalogViewModel(
     }
 
     companion object {
-        fun provideFactory(catalogRepository: CatalogRepository): ViewModelProvider.Factory =
+        fun provideFactory(
+            catalogRepository: CatalogRepository,
+            botInstanceManager: BotInstanceManager? = null
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return CatalogViewModel(catalogRepository) as T
+                    return CatalogViewModel(catalogRepository, botInstanceManager) as T
                 }
             }
 

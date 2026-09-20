@@ -106,6 +106,74 @@ class MockCatalogApi : CatalogApi {
                 entryClass = "com.tapbot.core.runner.engine.GeminiBotEngine"
             ),
             permissionsRequired = listOf("INTERNET", "FOREGROUND_SERVICE")
+        ),
+        BotMetadata(
+            id = "bot_music",
+            name = "Music Bot",
+            summary = "Streams audio, queues playlists, and provides music playback controls.",
+            description = "Runs locally on Android to manage Telegram audio playback queues, interactive commands, and volume control.",
+            author = "TapBot Audio Labs",
+            version = "1.0.0",
+            iconUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200",
+            category = "Media",
+            tags = listOf("music", "audio", "player"),
+            requiredCredentials = listOf(
+                BotCredentialSpec.TELEGRAM_BOT_TOKEN,
+                BotCredentialSpec(
+                    key = "spotify_client_id",
+                    label = "Spotify Client ID",
+                    description = "Optional Spotify integration client identifier",
+                    isSecret = false,
+                    isRequired = false,
+                    placeholder = "Optional client id"
+                )
+            ),
+            packageInfo = BotPackageInfo(
+                packageUrl = "https://assets.tapbot.internal/packages/bot_music_1.0.0.botpkg",
+                sha256Checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                runtimeType = "native_art"
+            ),
+            permissionsRequired = listOf("INTERNET", "FOREGROUND_SERVICE")
+        ),
+        BotMetadata(
+            id = "bot_ai",
+            name = "AI Bot",
+            summary = "Generative AI conversational assistant powered on-device.",
+            description = "Provides multi-turn AI reasoning, text summarization, and code explanation directly through your personal Telegram bot.",
+            author = "TapBot AI Labs",
+            version = "1.0.0",
+            iconUrl = "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=200",
+            category = "Productivity",
+            tags = listOf("ai", "assistant", "productivity"),
+            requiredCredentials = listOf(
+                BotCredentialSpec.TELEGRAM_BOT_TOKEN
+            ),
+            packageInfo = BotPackageInfo(
+                packageUrl = "https://assets.tapbot.internal/packages/bot_ai_1.0.0.botpkg",
+                sha256Checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                runtimeType = "native_art"
+            ),
+            permissionsRequired = listOf("INTERNET", "FOREGROUND_SERVICE")
+        ),
+        BotMetadata(
+            id = "bot_utility",
+            name = "Utility Bot",
+            summary = "System diagnostics, uptime monitoring, latency checks, and test crash simulation.",
+            description = "Monitors Android ART execution metrics, memory usage, and allows resilience and crash testing via /crash.",
+            author = "TapBot Core",
+            version = "1.0.0",
+            iconUrl = "https://images.unsplash.com/photo-1518770660439-4636190af475?w=200",
+            category = "Utilities",
+            tags = listOf("utility", "diagnostics", "tools"),
+            requiredCredentials = listOf(
+                BotCredentialSpec.TELEGRAM_BOT_TOKEN
+            ),
+            packageInfo = BotPackageInfo(
+                packageUrl = "https://assets.tapbot.internal/packages/bot_utility_1.0.0.botpkg",
+                sha256Checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                runtimeType = "native_art"
+            ),
+            permissionsRequired = listOf("INTERNET", "FOREGROUND_SERVICE")
         )
     )
 

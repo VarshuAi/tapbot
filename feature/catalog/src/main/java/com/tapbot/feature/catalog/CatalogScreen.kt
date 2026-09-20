@@ -140,12 +140,45 @@ fun CatalogScreen(
                     }
                 }
                 is CatalogUiState.Success -> {
-                    CatalogContent(
-                        state = state,
-                        onSearchQueryChanged = viewModel::updateSearchQuery,
-                        onCategorySelected = viewModel::selectCategory,
-                        onBotClick = onBotClick
-                    )
+                    androidx.compose.material3.TabRow(
+                        selectedTabIndex = state.selectedTab,
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ) {
+                        androidx.compose.material3.Tab(
+                            selected = state.selectedTab == 0,
+                            onClick = { viewModel.selectTab(0) },
+                            text = { Text("Bot Store") },
+                            icon = { Icon(Icons.Default.SmartToy, contentDescription = null) }
+                        )
+                        androidx.compose.material3.Tab(
+                            selected = state.selectedTab == 1,
+                            onClick = { viewModel.selectTab(1) },
+                            text = {
+                                val count = state.installedInstances.size
+                                Text(if (count > 0) "My Bots ($count)" else "My Bots")
+                            },
+                            icon = { Icon(Icons.Default.Star, contentDescription = null) }
+                        )
+                    }
+
+                    if (state.selectedTab == 0) {
+                        CatalogContent(
+                            state = state,
+                            onSearchQueryChanged = viewModel::updateSearchQuery,
+                            onCategorySelected = viewModel::selectCategory,
+                            onBotClick = onBotClick
+                        )
+                    } else {
+                        MyBotsContent(
+                            instances = state.installedInstances,
+                            onStartBot = viewModel::startBot,
+                            onStopBot = viewModel::stopBot,
+                            onRestartBot = viewModel::restartBot,
+                            onConfigureBot = onBotClick,
+                            onUninstallBot = viewModel::uninstallBot,
+                            onBrowseStoreClick = { viewModel.selectTab(0) }
+                        )
+                    }
                 }
             }
         }

@@ -106,16 +106,20 @@ class TapBotApplication : Application() {
         // 6. Initialize runner service controller
         botServiceController = AndroidBotServiceController(this)
 
-        // 7. Connect ServiceLocator hooks for BotForegroundService
+        // 7. Initialize BotInstanceManager with persistent storage and hardware Keystore
+        botInstanceManager = DefaultBotInstanceManager(
+            context = this,
+            storageFile = File(filesDir, "instances.json"),
+            installDir = File(filesDir, "installed_packages"),
+            credentialStore = credentialStore,
+            telegramApi = telegramApiClient
+        )
+
+        // 8. Connect ServiceLocator hooks for BotForegroundService
+        ServiceLocator.botInstanceManager = botInstanceManager
+        ServiceLocator.credentialStore = credentialStore
         ServiceLocator.pocCredentialStore = pocCredentialStore
         ServiceLocator.logRepository = logRepository
         ServiceLocator.telegramApiClient = telegramApiClient
-
-        // 8. Initialize BotInstanceManager for Phase 3 Background Execution
-        botInstanceManager = DefaultBotInstanceManager(
-            context = this,
-            credentialStore = pocCredentialStore,
-            telegramApi = telegramApiClient
-        )
     }
 }

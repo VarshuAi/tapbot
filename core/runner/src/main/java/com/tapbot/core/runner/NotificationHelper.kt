@@ -100,8 +100,12 @@ class NotificationHelper(private val context: Context) {
         runningBotsCount: Int,
         activeBotNames: List<String>
     ): Notification {
-        val primaryName = if (activeBotNames.isNotEmpty()) activeBotNames.first() else "Telegram Bot"
-        return buildBotRunningNotification(primaryName)
+        val summaryText = if (runningBotsCount <= 1) {
+            activeBotNames.firstOrNull() ?: "Telegram Bot"
+        } else {
+            "$runningBotsCount Bots (${activeBotNames.take(3).joinToString(", ")})"
+        }
+        return buildBotRunningNotification(summaryText, "Running locally in background")
     }
 
     companion object {

@@ -27,7 +27,10 @@ fun TapBotNavHost(
     ) {
         composable(route = Screen.Catalog.route) {
             val catalogViewModel: CatalogViewModel = viewModel(
-                factory = CatalogViewModel.provideFactory(app.catalogRepository)
+                factory = CatalogViewModel.provideFactory(
+                    catalogRepository = app.catalogRepository,
+                    botInstanceManager = app.botInstanceManager
+                )
             )
             CatalogScreen(
                 viewModel = catalogViewModel,
