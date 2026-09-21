@@ -803,4 +803,33 @@ describe('TapBot Catalog Backend API & Admin Dashboard', () => {
         const res = await worker.fetch(req, env);
         expect(res.status).toBe(401);
     });
+
+    it('supports direct package upload (PUT /api/v1/admin/packages/:key) and public download (GET /api/v1/packages/:key)', async () => {
+        const dummyPackage = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x00, 0x00]); // zip magic bytes
+        const uploadReq = new Request('https://api.tapbot.internal/api/v1/admin/packages/packages%2Fbot_rss_1.2.0.botpkg', {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${ADMIN_KEY}`,
+                'Content-Type': 'application/octet-stream'
+            },
+            body: dummyPackage
+        });
+
+        const uploadRes = await worker.fetch(uploadReq, env);
+        expect(uploadRes.status).toBe(200);
+        const uploadBody: any = await uploadRes.json();
+        expect(uploadBody.success).toBe(true);
+        expect(uploadBody.data.packageKey).toBe('packages/bot_rss_1.2.0.botpkg');
+        expect(uploadBody.data.packageSize).toBe(6);
+        expect(uploadBody.data.sha256).toBeDefined();
+
+        // Now download via public endpoint
+        const downloadReq = new Request('https://api.tapbot.internal/api/v1/packages/packages%2Fbot_rss_1.2.0.botpkg', {
+            method: 'GET'
+        });
+        const downloadRes = await worker.fetch(downloadReq, env);
+        expect(downloadRes.status).toBe(200);
+        const downloadedBytes = new Uint8Array(await downloadRes.arrayBuffer());
+        expect(downloadedBytes.length).toBe(6);
+    });
 });

@@ -936,8 +936,11 @@ export async function handleAdminRoutes(request: Request, env: Env, url: URL): P
         const hashArr = Array.from(new Uint8Array(hashBuf));
         const sha256 = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
 
+        const customKey = request.headers.get('X-Package-Key');
         const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const packageKey = `packages/${generateId('pkg')}_${safeFilename}`;
+        const packageKey = customKey && customKey.trim().length > 0
+            ? customKey.trim()
+            : `packages/${generateId('pkg')}_${safeFilename}`;
 
         await env.BUCKET.put(packageKey, arrayBuffer, {
             httpMetadata: {
@@ -961,6 +964,52 @@ export async function handleAdminRoutes(request: Request, env: Env, url: URL): P
                 filename
             }
         }, 201);
+    }
+
+    // -----------------------------------------------------------------
+    // 16b. PUT /api/v1/admin/packages/:key - Direct upload to exact package key
+    // -----------------------------------------------------------------
+    const putPkgMatch = path.match(/^\/api\/v1\/admin\/packages\/(.+)$/);
+    if (putPkgMatch && request.method === 'PUT') {
+        const rawKey = decodeURIComponent(putPkgMatch[1]);
+        const arrayBuffer = await request.arrayBuffer();
+
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+            return jsonResponse({
+                success: false,
+                error: { code: 'BAD_REQUEST', message: 'Package file is empty' }
+            }, 400);
+        }
+
+        const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuffer);
+        const hashArr = Array.from(new Uint8Array(hashBuf));
+        const sha256 = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
+
+        await env.BUCKET.put(rawKey, arrayBuffer, {
+            httpMetadata: {
+                contentType: 'application/octet-stream'
+            }
+        });
+
+        // If a version row exists with this package_key, update package_size & sha256
+        await env.DB.prepare(
+            'UPDATE bot_versions SET package_size = ?, sha256 = ? WHERE package_key = ?'
+        ).bind(arrayBuffer.byteLength, sha256, rawKey).run();
+
+        await recordAuditLog(env, 'upload_package', 'package', rawKey, {
+            packageKey: rawKey,
+            packageSize: arrayBuffer.byteLength,
+            sha256
+        });
+
+        return jsonResponse({
+            success: true,
+            data: {
+                packageKey: rawKey,
+                packageSize: arrayBuffer.byteLength,
+                sha256
+            }
+        }, 200);
     }
 
     // -----------------------------------------------------------------
