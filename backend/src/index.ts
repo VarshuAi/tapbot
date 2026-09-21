@@ -7,6 +7,7 @@ import { Env, ApiResponse } from './types';
 import { handleCorsPreflight, withCors } from './middleware/cors';
 import { handlePublicRoutes } from './routes/public';
 import { handleAdminRoutes } from './routes/admin';
+import { renderDashboardHtml } from './dashboard/html';
 
 export type { Env };
 
@@ -20,19 +21,37 @@ export default {
         const url = new URL(request.url);
 
         try {
-            // 2. Dispatch Admin Routes
+            // 2. Serve Web-Based Admin Dashboard SPA (/admin)
+            if (
+                request.method === 'GET' &&
+                (url.pathname === '/admin' || url.pathname === '/admin/' || url.pathname === '/admin.html')
+            ) {
+                const html = renderDashboardHtml();
+                return new Response(html, {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/html; charset=utf-8',
+                        'X-Content-Type-Options': 'nosniff',
+                        'X-Frame-Options': 'DENY',
+                        'Referrer-Policy': 'strict-origin-when-cross-origin',
+                        'Cache-Control': 'no-cache, no-store, must-revalidate'
+                    }
+                });
+            }
+
+            // 3. Dispatch Admin API Routes (/api/v1/admin/...)
             const adminResponse = await handleAdminRoutes(request, env, url);
             if (adminResponse) {
                 return withCors(adminResponse);
             }
 
-            // 3. Dispatch Public Routes
+            // 4. Dispatch Public Routes (/api/v1/...)
             const publicResponse = await handlePublicRoutes(request, env, url);
             if (publicResponse) {
                 return withCors(publicResponse);
             }
 
-            // 4. Default 404 Not Found
+            // 5. Default 404 Not Found
             const notFoundPayload: ApiResponse = {
                 success: false,
                 error: {

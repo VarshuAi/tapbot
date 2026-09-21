@@ -292,8 +292,13 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL): 
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set('etag', object.httpEtag);
-        headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${rawKey.split('/').pop() || 'package.botpkg'}"`);
+        const contentType = object.httpMetadata?.contentType || 'application/octet-stream';
+        headers.set('Content-Type', contentType);
+        const isImage = contentType.startsWith('image/');
+        const disposition = isImage
+            ? 'inline'
+            : `attachment; filename="${rawKey.split('/').pop() || 'package.botpkg'}"`;
+        headers.set('Content-Disposition', disposition);
         headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
         return new Response(object.body, { headers });

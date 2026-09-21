@@ -19,6 +19,8 @@ export interface CategoryRow {
     slug: string;
 }
 
+export type BotLifecycleStatus = 'draft' | 'review' | 'published' | 'unpublished' | 'archived';
+
 export interface BotRow {
     id: string;
     slug: string;
@@ -29,7 +31,7 @@ export interface BotRow {
     category: string;
     runtime: string;
     current_version: string | null;
-    status: 'draft' | 'published' | 'archived';
+    status: BotLifecycleStatus;
     created_at: string;
     updated_at: string;
 }
@@ -57,6 +59,16 @@ export interface BotCredentialRow {
     required: number; // 0 or 1
     secret: number;   // 0 or 1
     input_type: string;
+}
+
+export interface AuditLogRow {
+    id: string;
+    action: string;
+    entity_type: string;
+    entity_id: string;
+    details: string | null;
+    actor: string;
+    created_at: string;
 }
 
 // -------------------------------------------------------------
@@ -111,11 +123,42 @@ export interface BotSummaryDto {
     updatedAt: string;
     credentials?: BotCredentialDto[];
     currentVersionInfo?: BotVersionDto | null;
+    versionsCount?: number;
 }
 
 export interface BotDetailDto extends BotSummaryDto {
     credentials: BotCredentialDto[];
     currentVersionInfo: BotVersionDto | null;
+    versions?: BotVersionDto[];
+}
+
+export interface AuditLogDto {
+    id: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    details: any;
+    actor: string;
+    createdAt: string;
+}
+
+export interface AdminStatsDto {
+    totalBots: number;
+    publishedBots: number;
+    draftBots: number;
+    reviewBots: number;
+    unpublishedBots: number;
+    archivedBots: number;
+    totalVersions: number;
+    downloads: string;
+    installs: string;
+    lifecycleBreakdown: {
+        draft: number;
+        review: number;
+        published: number;
+        unpublished: number;
+        archived: number;
+    };
 }
 
 // -------------------------------------------------------------
@@ -130,15 +173,23 @@ export interface CreateBotRequest {
     iconUrl?: string;
     category: string;
     runtime?: string;
+    status?: BotLifecycleStatus | string;
 }
 
 export interface UpdateBotRequest {
     name?: string;
+    slug?: string;
     description?: string;
     longDescription?: string;
     iconUrl?: string;
     category?: string;
     runtime?: string;
+    status?: BotLifecycleStatus | string;
+}
+
+export interface SetLifecycleRequest {
+    status: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED' | 'draft' | 'review' | 'published' | 'unpublished' | 'archived';
+    reason?: string;
 }
 
 export interface CreateVersionRequest {
