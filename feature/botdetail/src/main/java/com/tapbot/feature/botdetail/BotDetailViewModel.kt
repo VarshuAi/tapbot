@@ -69,7 +69,7 @@ class BotDetailViewModel(
     private fun loadBotData() {
         viewModelScope.launch {
             _uiState.value = BotDetailUiState.Loading
-            catalogRepository.getBotDetails(botId)
+            catalogRepository.getBotDetails(botId, forceRefresh = true)
                 .onSuccess { bot ->
                     val savedCredentials = credentialStore.getAllCredentials(botId)
                     val installed = installationManager?.isInstalled(bot.id) ?: (packageDownloader == null)

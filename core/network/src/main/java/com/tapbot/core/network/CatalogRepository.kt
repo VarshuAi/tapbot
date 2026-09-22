@@ -85,10 +85,14 @@ class OfflineFirstCatalogRepository(
             }
         }
 
-        return remoteSource.getBotDetails(botId).recoverCatching { error ->
-            val fallback = cache.getCachedBot(botId)
-            fallback ?: throw error
-        }
+        return remoteSource.getBotDetails(botId)
+            .onSuccess { freshBot ->
+                cache.updateBot(freshBot)
+            }
+            .recoverCatching { error ->
+                val fallback = cache.getCachedBot(botId)
+                fallback ?: throw error
+            }
     }
 
     override suspend fun getBotVersions(botId: String): Result<List<BotVersion>> {

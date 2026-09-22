@@ -52,6 +52,36 @@ class LocalCatalogCache(
     }
 
     @Synchronized
+    fun updateBot(bot: BotMetadata) {
+        val current = inMemoryBots?.toMutableList() ?: mutableListOf()
+        val index = current.indexOfFirst { it.id == bot.id }
+        if (index >= 0) {
+            current[index] = bot
+        } else {
+            current.add(bot)
+        }
+        inMemoryBots = current
+        if (cacheFile != null) {
+            try {
+                cacheFile.parentFile?.mkdirs()
+                val payload = CachedCatalogPayload(bots = current, categories = inMemoryCategories ?: emptyList())
+                cacheFile.writeText(json.encodeToString(CachedCatalogPayload.serializer(), payload))
+            } catch (_: Exception) {
+                // Ignore disk cache write errors
+            }
+        }
+    }
+
+    @Synchronized
+    fun clearCache() {
+        inMemoryBots = null
+        inMemoryCategories = null
+        if (cacheFile != null && cacheFile.exists()) {
+            cacheFile.delete()
+        }
+    }
+
+    @Synchronized
     fun hasCache(): Boolean = !inMemoryBots.isNullOrEmpty()
 
     private fun loadFromDisk() {
