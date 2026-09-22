@@ -227,6 +227,16 @@ class BotDetailViewModel(
                 if (!tgRegex.matches(value)) {
                     errors[spec.key] = "Invalid Telegram Bot Token format (e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)"
                 }
+            } else if (value.isNotBlank() && (spec.key.equals("api_id", ignoreCase = true) || spec.key.equals("app_api_id", ignoreCase = true))) {
+                val apiIdRegex = Regex("""^\d{4,12}$""")
+                if (!apiIdRegex.matches(value)) {
+                    errors[spec.key] = "Invalid App api_id format (must be numeric, e.g. 12345678)"
+                }
+            } else if (value.isNotBlank() && (spec.key.equals("api_hash", ignoreCase = true) || spec.key.equals("app_api_hash", ignoreCase = true))) {
+                val apiHashRegex = Regex("""^[a-fA-F0-9]{32}$""")
+                if (!apiHashRegex.matches(value)) {
+                    errors[spec.key] = "Invalid App api_hash format (must be 32-character hexadecimal hash)"
+                }
             }
         }
         if (errors.isNotEmpty()) {

@@ -26,5 +26,25 @@ data class BotCredentialSpec(
             placeholder = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ",
             helpUrl = "https://t.me/BotFather"
         )
+
+        val TELEGRAM_API_ID = BotCredentialSpec(
+            key = "api_id",
+            label = "App api_id",
+            description = "App API ID obtained from my.telegram.org (under API development tools).",
+            isSecret = false,
+            isRequired = true,
+            placeholder = "12345678",
+            helpUrl = "https://my.telegram.org"
+        )
+
+        val TELEGRAM_API_HASH = BotCredentialSpec(
+            key = "api_hash",
+            label = "App api_hash",
+            description = "App API Hash (32-character hexadecimal) obtained from my.telegram.org.",
+            isSecret = true,
+            isRequired = true,
+            placeholder = "0123456789abcdef0123456789abcdef",
+            helpUrl = "https://my.telegram.org"
+        )
     }
 }
