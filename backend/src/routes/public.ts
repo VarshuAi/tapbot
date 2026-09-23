@@ -273,9 +273,9 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL): 
         });
     }
 
-    // 5. GET /api/v1/packages/:key - Download package archive from R2
+    // 5. GET / HEAD /api/v1/packages/:key - Download package archive from R2
     const pkgMatch = path.match(/^\/api\/v1\/packages\/(.+)$/);
-    if (pkgMatch && request.method === 'GET') {
+    if (pkgMatch && (request.method === 'GET' || request.method === 'HEAD')) {
         const rawKey = decodeURIComponent(pkgMatch[1]);
         const object = await env.BUCKET.get(rawKey);
 
@@ -301,7 +301,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL): 
         headers.set('Content-Disposition', disposition);
         headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
-        return new Response(object.body, { headers });
+        return new Response(request.method === 'HEAD' ? null : object.body, { headers });
     }
 
     return null; // Route not matched by public handler
