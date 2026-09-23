@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import com.tapbot.core.logging.BotLogRepository
 import com.tapbot.core.model.BotInstanceStatus
+import com.tapbot.core.model.BotRunState
 import com.tapbot.core.model.LogLevel
 import com.tapbot.core.network.TelegramApiClient
 import com.tapbot.core.runner.manager.BotInstanceManager
@@ -29,6 +30,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -85,6 +87,7 @@ class BotForegroundService : Service() {
         notificationHelper.createNotificationChannel()
 
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         registerNetworkCallback()
     }
 
@@ -128,11 +131,6 @@ class BotForegroundService : Service() {
     }
 
     private suspend fun startBotInstance(installationId: String) = lifecycleMutex.withLock {
-        // 1. Duplicate Process Check: is this instance already active?
-        if (activeExecutions.containsKey(installationId)) {
-            return@withLock
-        }
-
         val manager = ServiceLocator.botInstanceManager
         val credStore = ServiceLocator.credentialStore ?: ServiceLocator.pocCredentialStore
         val logRepo = ServiceLocator.logRepository
@@ -145,6 +143,11 @@ class BotForegroundService : Service() {
         val botId = instance?.botId ?: installationId
         val botName = instance?.name ?: "Telegram Bot"
 
+        // 1. Duplicate Process Check: is this instance or bot already active?
+        if (activeExecutions.containsKey(installationId) || activeExecutions.values.any { it.botId == botId || it.installationId == installationId }) {
+            return@withLock
+        }
+
         // Resolve Token
         val token = credStore?.getCredential(botId, "bot_token")
             ?: credStore?.getCredential(botId, "telegram_bot_token")
@@ -155,6 +158,7 @@ class BotForegroundService : Service() {
             logRepo?.appendLog(botId, LogLevel.ERROR, TAG, err)
             manager?.updateInstanceStatus(installationId, BotInstanceStatus.Crashed(err))
             _runtimeState.value = BotRuntimeState.Error(err)
+            _botStates.update { it + (botId to BotRunState.Error(err)) }
             checkOrphanedService()
             return@withLock
         }
@@ -165,6 +169,7 @@ class BotForegroundService : Service() {
                 val err = "Duplicate Telegram connection prevented: Token is already active on '${active.botName}'"
                 logRepo?.appendLog(botId, LogLevel.WARN, TAG, err)
                 manager?.updateInstanceStatus(installationId, BotInstanceStatus.Crashed(err))
+                _botStates.update { it + (botId to BotRunState.Error(err)) }
                 checkOrphanedService()
                 return@withLock
             }
@@ -173,6 +178,7 @@ class BotForegroundService : Service() {
         // Update state
         manager?.updateInstanceStatus(installationId, BotInstanceStatus.Starting)
         _runtimeState.value = BotRuntimeState.Starting
+        _botStates.update { it + (botId to BotRunState.Starting) }
 
         val runtime = BotRuntimeFactory.createRuntime(botId)
 
@@ -181,6 +187,7 @@ class BotForegroundService : Service() {
             val crashMsg = throwable.message ?: "Uncaught runtime crash in $botName"
             logRepo?.appendLog(botId, LogLevel.ERROR, TAG, "CRASH DETECTED in '$botName': $crashMsg")
             manager?.recordCrash(installationId, crashMsg)
+            _botStates.update { it + (botId to BotRunState.Error(crashMsg)) }
             activeExecutions.remove(installationId)
             updateNotification()
             checkOrphanedService()
@@ -199,15 +206,24 @@ class BotForegroundService : Service() {
                             )
                         )
                         _runtimeState.value = st
+                        _botStates.update {
+                            it + (botId to BotRunState.Running(
+                                startedAt = st.startedAt,
+                                pollCount = st.pollCount,
+                                lastActivityAt = st.lastActivityAt
+                            ))
+                        }
                         // Note: updateNotification is omitted here to prevent expensive IPC binder churn on every poll tick.
                         // Notifications are only refreshed on lifecycle transitions (add, remove, crash).
                     }
                     is BotRuntimeState.Error -> {
                         logRepo?.appendLog(botId, LogLevel.ERROR, TAG, "Runtime error: ${st.message}")
                         manager?.recordCrash(installationId, st.message)
+                        _botStates.update { it + (botId to BotRunState.Error(st.message)) }
                     }
                     is BotRuntimeState.Stopped -> {
                         manager?.updateInstanceStatus(installationId, BotInstanceStatus.Stopped)
+                        _botStates.update { it + (botId to BotRunState.Stopped) }
                     }
                     else -> {}
                 }
@@ -257,7 +273,12 @@ class BotForegroundService : Service() {
     }
 
     private suspend fun stopBotInstance(installationId: String) = lifecycleMutex.withLock {
-        val execution = activeExecutions.remove(installationId)
+        // Resolve target execution either by direct key, botId, or installationId
+        val entry = activeExecutions.entries.firstOrNull {
+            it.key == installationId || it.value.botId == installationId || it.value.installationId == installationId
+        }
+        val execution = entry?.let { activeExecutions.remove(it.key) }
+
         if (execution != null) {
             execution.job.cancel()
             try {
@@ -269,7 +290,10 @@ class BotForegroundService : Service() {
                 TAG,
                 "Stopped bot '${execution.botName}' by user command."
             )
-            ServiceLocator.botInstanceManager?.updateInstanceStatus(installationId, BotInstanceStatus.Stopped)
+            ServiceLocator.botInstanceManager?.updateInstanceStatus(execution.installationId, BotInstanceStatus.Stopped)
+            _botStates.update { it + (execution.botId to BotRunState.Stopped) }
+        } else {
+            _botStates.update { it + (installationId to BotRunState.Stopped) }
         }
 
         updateNotification()
@@ -286,6 +310,7 @@ class BotForegroundService : Service() {
         }
         activeExecutions.clear()
         _runtimeState.value = BotRuntimeState.Stopped
+        _botStates.value = emptyMap()
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -327,6 +352,7 @@ class BotForegroundService : Service() {
     private fun checkOrphanedService() {
         if (activeExecutions.isEmpty()) {
             _runtimeState.value = BotRuntimeState.Stopped
+            _botStates.value = emptyMap()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -358,22 +384,21 @@ class BotForegroundService : Service() {
     }
 
     private fun registerNetworkCallback() {
-        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        val callback = object : ConnectivityManager.NetworkCallback() {
+
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 _networkState.value = true
-                ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.INFO, TAG, "Network connection active.")
             }
+
             override fun onLost(network: Network) {
                 _networkState.value = false
-                ServiceLocator.logRepository?.appendLog(DEFAULT_BOT_ID, LogLevel.WARN, TAG, "Network connection lost. Polling suspended.")
             }
         }
-        networkCallback = callback
-        connectivityManager?.registerNetworkCallback(request, callback)
+
+        connectivityManager?.registerNetworkCallback(request, networkCallback!!)
     }
 
     override fun onDestroy() {
@@ -399,8 +424,15 @@ class BotForegroundService : Service() {
         private val _runtimeState = MutableStateFlow<BotRuntimeState>(BotRuntimeState.Stopped)
         val runtimeState: StateFlow<BotRuntimeState> = _runtimeState.asStateFlow()
 
+        private val _botStates = MutableStateFlow<Map<String, BotRunState>>(emptyMap())
+        val botStates: StateFlow<Map<String, BotRunState>> = _botStates.asStateFlow()
+
         internal fun updateStateDirectly(state: BotRuntimeState) {
             _runtimeState.value = state
+        }
+
+        internal fun updateBotState(botId: String, state: BotRunState) {
+            _botStates.update { it + (botId to state) }
         }
     }
 }

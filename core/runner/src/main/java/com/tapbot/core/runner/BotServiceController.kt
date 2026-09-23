@@ -24,26 +24,7 @@ class AndroidBotServiceController(
 ) : BotServiceController {
 
     private val scope = CoroutineScope(Dispatchers.Default)
-    private val mappedFlow = MutableStateFlow<BotRunState>(BotRunState.Stopped)
-
-    init {
-        scope.launch {
-            BotForegroundService.runtimeState.collect { st ->
-                mappedFlow.value = when (st) {
-                    is BotRuntimeState.Stopped -> BotRunState.Stopped
-                    is BotRuntimeState.Starting -> BotRunState.Starting
-                    is BotRuntimeState.Connected -> BotRunState.Starting
-                    is BotRuntimeState.Running -> BotRunState.Running(
-                        startedAt = st.startedAt,
-                        pollCount = st.pollCount,
-                        lastActivityAt = st.lastActivityAt
-                    )
-                    is BotRuntimeState.Stopping -> BotRunState.Stopped
-                    is BotRuntimeState.Error -> BotRunState.Error(st.message, st.timestamp)
-                }
-            }
-        }
-    }
+    private val botFlows = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<BotRunState>>()
 
     override fun startBot(botId: String) {
         val intent = Intent(context, BotForegroundService::class.java).apply {
@@ -73,6 +54,15 @@ class AndroidBotServiceController(
     }
 
     override fun getBotRunState(botId: String): StateFlow<BotRunState> {
-        return mappedFlow.asStateFlow()
+        return botFlows.computeIfAbsent(botId) { id ->
+            val initial = BotForegroundService.botStates.value[id] ?: BotRunState.Stopped
+            val flow = MutableStateFlow<BotRunState>(initial)
+            scope.launch {
+                BotForegroundService.botStates.collect { states ->
+                    flow.value = states[id] ?: BotRunState.Stopped
+                }
+            }
+            flow
+        }.asStateFlow()
     }
 }

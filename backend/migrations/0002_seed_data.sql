@@ -79,6 +79,20 @@ INSERT OR IGNORE INTO bots (id, slug, name, description, long_description, icon_
     'draft',
     '2026-09-19T04:00:00Z',
     '2026-09-19T04:00:00Z'
+),
+(
+    'bot_exon',
+    'exon-robot',
+    'Exon Robot',
+    'Fast Telegram group management bot with MTProto and Bot API support.',
+    'A modular Telegram group management bot ported from python-telegram-bot, Pyrogram, and Telethon to TapBot. Supports ban, mute, kick, anti-spam, broadcast, and group administration.',
+    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200',
+    'automation',
+    'native_art',
+    '1.0.0',
+    'published',
+    '2026-09-22T13:40:00Z',
+    '2026-09-22T13:40:00Z'
 );
 
 -- 3. Insert Bot Versions
@@ -137,6 +151,17 @@ INSERT OR IGNORE INTO bot_versions (id, bot_id, version, package_key, package_si
     'Initial draft build for testing admin publish flow.',
     1,
     '2026-09-19T04:00:00Z'
+),
+(
+    'ver_exon_100',
+    'bot_exon',
+    '1.0.0',
+    'packages/bot_exon_1.0.0.botpkg',
+    815,
+    '252fd42cb57aec6b461877acda159d9cdee43c0087d1ac0e17ed185d3c1f02b0',
+    'Initial release of Exon Robot for TapBot on-device runner with MTProto & Bot API support.',
+    1,
+    '2026-09-22T13:40:00Z'
 );
 
 -- 4. Insert Bot Credentials
@@ -214,4 +239,45 @@ INSERT OR IGNORE INTO bot_credentials (id, bot_id, key, display_name, descriptio
     1,
     1,
     'password'
+),
+-- Exon Robot
+(
+    'cred_exon_token',
+    'bot_exon',
+    'bot_token',
+    'Telegram Bot Token',
+    'Token obtained from @BotFather in Telegram.',
+    1,
+    1,
+    'password'
+),
+(
+    'cred_exon_api_id',
+    'bot_exon',
+    'api_id',
+    'App api_id',
+    'App API ID obtained from my.telegram.org under API development tools.',
+    1,
+    0,
+    'text'
+),
+(
+    'cred_exon_api_hash',
+    'bot_exon',
+    'api_hash',
+    'App api_hash',
+    'App API Hash (32-character hexadecimal) obtained from my.telegram.org.',
+    1,
+    1,
+    'password'
+),
+(
+    'cred_exon_owner_id',
+    'bot_exon',
+    'owner_id',
+    'Owner Telegram ID',
+    'Your numeric Telegram User ID for admin authorization.',
+    1,
+    0,
+    'text'
 );

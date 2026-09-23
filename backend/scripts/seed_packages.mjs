@@ -165,6 +165,26 @@ const BOTS_TO_SEED = [
             minimumRuntimeVersion: '1.0.0',
             entrypoint: 'com.tapbot.bots.draft.DraftBot'
         }
+    },
+    {
+        packageKey: 'packages/bot_exon_1.0.0.botpkg',
+        manifest: {
+            id: 'bot_exon',
+            name: 'Exon Robot',
+            version: '1.0.0',
+            category: 'automation',
+            runtime: 'native_art',
+            minimumAppVersion: 1,
+            minimumRuntimeVersion: '1.0.0',
+            entrypoint: 'com.tapbot.bots.exon.ExonBot',
+            permissions: ['INTERNET', 'FOREGROUND_SERVICE', 'NOTIFICATIONS'],
+            credentials: [
+                { key: 'bot_token', displayName: 'Telegram Bot Token', required: true, secret: true, inputType: 'password' },
+                { key: 'api_id', displayName: 'App api_id', required: true, secret: false, inputType: 'text' },
+                { key: 'api_hash', displayName: 'App api_hash', required: true, secret: true, inputType: 'password' },
+                { key: 'owner_id', displayName: 'Owner Telegram ID', required: true, secret: false, inputType: 'text' }
+            ]
+        }
     }
 ];
 
